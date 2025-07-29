@@ -1,0 +1,8 @@
+[package]
+name = "ramhas"
+version = "0.1.0"
+author = ["Desmond Germans <desmond@germansmedia.nl>"]
+edition = "2021"
+
+[dependencies]
+generational-arena = "0.2.9"
