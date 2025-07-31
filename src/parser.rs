@@ -1,208 +1,249 @@
-use {crate::*, generational_arena::Index as GenIndex};
+use {
+    crate::*,
+    std::{cell::RefCell, rc::Rc},
+};
 
 pub struct Parser<'a> {
-    arena: Arena,
     tokenizer: Tokenizer<'a>,
-    peeked: Option<Token>,
+    current: Option<Token>,
+    scopes: Scopes,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(source: &'a str) -> Self {
-        let arena = Arena::new();
         let mut tokenizer = Tokenizer::new(source);
-        let peeked = tokenizer.next();
+        let current = tokenizer.next();
+        let scopes = Scopes::new();
         Self {
-            arena,
             tokenizer,
-            peeked,
+            current,
+            scopes,
         }
     }
 
-    pub fn print_state(&self) {
-        println!("arena:");
-        self.arena.print_state();
+    pub fn print_tokens(&mut self) {
+        while let Some(t) = &self.current {
+            println!("{}", t);
+            self.consume();
+        }
     }
 
     fn consume(&mut self) {
-        self.peeked = self.tokenizer.next();
+        self.current = self.tokenizer.next();
     }
 
-    pub fn parse_program(&mut self) -> GenIndex {
-        let ctrl = self.arena.insert(Node::Start);
-        if let Some(Token::Return) = self.peeked {
-            self.parse_return_statement(ctrl)
+    fn expect(&mut self, token: Token) {
+        if let Some(t) = &self.current {
+            if *t == token {
+                self.consume();
+            } else {
+                panic!("expected `{}`, got `{}`", token, t);
+            }
         } else {
-            panic!("`return` expected");
+            panic!("expected `{}`, got end of source", token);
         }
     }
 
-    fn parse_return_statement(&mut self, ctrl: GenIndex) -> GenIndex {
-        self.consume();
-        let id = self.parse_expression();
-        let id = self.arena.insert(Node::Return { ctrl, id });
-        if let Some(Token::Semicolon) = self.peeked {
-            self.consume();
-        } else {
-            panic!("`;` expected");
+    pub fn program(&mut self) -> Rc<RefCell<Node>> {
+        let ctrl = Rc::new(RefCell::new(Node::Start));
+        self.scopes.push();
+        let mut result: Option<Rc<RefCell<Node>>> = None;
+        while let Some(_) = self.current {
+            result = self.statement(&ctrl);
         }
-        id
+        self.scopes.pop();
+        if let Some(result) = result {
+            result
+        } else {
+            panic!("program: return statement expected");
+        }
     }
 
-    fn parse_expression(&mut self) -> GenIndex {
-        self.parse_additive_expression()
+    fn statement(&mut self, ctrl: &Rc<RefCell<Node>>) -> Option<Rc<RefCell<Node>>> {
+        match &self.current {
+            Some(Token::Return) => Some(self.return_statement(ctrl)),
+            Some(Token::Int) => {
+                self.declaration_statement(ctrl);
+                None
+            }
+            Some(Token::OpenBrace) => {
+                self.block_statement(ctrl);
+                None
+            }
+            Some(Token::Identifier(name)) => {
+                self.expression_statement(ctrl, &name.clone());
+                None
+            }
+            Some(token) => panic!("statement: unexpected `{}`", token),
+            None => panic!("statement: unexpected end of source"),
+        }
     }
 
-    fn parse_additive_expression(&mut self) -> GenIndex {
-        let mut id = self.parse_multiplicative_expression();
+    fn return_statement(&mut self, ctrl: &Rc<RefCell<Node>>) -> Rc<RefCell<Node>> {
+        self.expect(Token::Return);
+        let node = self.expression(ctrl);
+        let node = Rc::new(RefCell::new(Node::Return {
+            ctrl: ctrl.clone(),
+            node,
+        }));
+        self.expect(Token::Semicolon);
+        node
+    }
+
+    fn declaration_statement(&mut self, ctrl: &Rc<RefCell<Node>>) {
+        self.expect(Token::Int);
+        let name = if let Some(Token::Identifier(name)) = &self.current {
+            name.clone()
+        } else {
+            panic!("declaration statement: identifier expected");
+        };
+        self.consume(); // name
+        self.expect(Token::Equal);
+        let node = self.expression(ctrl);
+        self.expect(Token::Semicolon);
+        self.scopes.declare(&name, node);
+    }
+
+    fn block_statement(&mut self, ctrl: &Rc<RefCell<Node>>) {
+        self.expect(Token::OpenBrace);
+        self.scopes.push();
         loop {
-            match self.peeked {
+            match self.current {
+                Some(Token::CloseBrace) => {
+                    self.consume();
+                    break;
+                }
+                None => {
+                    panic!("block statement: unexpected end of source");
+                }
+                _ => {
+                    self.statement(ctrl);
+                }
+            }
+        }
+        self.scopes.pop();
+    }
+
+    fn expression_statement(&mut self, ctrl: &Rc<RefCell<Node>>, name: &str) {
+        self.consume(); // identifier
+        self.expect(Token::Equal);
+        let node = self.expression(ctrl);
+        self.expect(Token::Semicolon);
+        self.scopes.set(name, node);
+    }
+
+    fn expression(&mut self, ctrl: &Rc<RefCell<Node>>) -> Rc<RefCell<Node>> {
+        let node = self.additive_expression(ctrl);
+        node.borrow_mut().optimize();
+        node
+    }
+
+    fn additive_expression(&mut self, ctrl: &Rc<RefCell<Node>>) -> Rc<RefCell<Node>> {
+        let mut total = self.multiplicative_expression(ctrl);
+        loop {
+            match self.current {
                 Some(Token::Plus) => {
                     self.consume();
-                    let id2 = self.parse_multiplicative_expression();
-                    if let (Some(ref mut node), Some(ref mut node2)) = self.arena.get2_mut(id, id2)
-                    {
-                        if let Node::Constant { ref mut value } = node {
-                            if let Node::Constant {
-                                value: ref mut value2,
-                            } = node2
-                            {
-                                *value += *value2;
-                                self.arena.remove(id2);
-                            } else {
-                                id = self.arena.insert(Node::Add { id, id2 });
-                            }
-                        } else {
-                            id = self.arena.insert(Node::Add { id, id2 });
-                        }
-                    } else {
-                        panic!("can't find nodes {:?} and {:?}", id, id2);
-                    }
+                    let rhs = self.multiplicative_expression(ctrl);
+                    total = Rc::new(RefCell::new(Node::Add {
+                        ctrl: ctrl.clone(),
+                        lhs: total,
+                        rhs: rhs,
+                    }))
                 }
                 Some(Token::Minus) => {
                     self.consume();
-                    let id2 = self.parse_multiplicative_expression();
-                    if let (Some(ref mut node), Some(ref mut node2)) = self.arena.get2_mut(id, id2)
-                    {
-                        if let Node::Constant { ref mut value } = node {
-                            if let Node::Constant {
-                                value: ref mut value2,
-                            } = node2
-                            {
-                                *value -= *value2;
-                                self.arena.remove(id2);
-                            } else {
-                                id = self.arena.insert(Node::Sub { id, id2 });
-                            }
-                        } else {
-                            id = self.arena.insert(Node::Sub { id, id2 });
-                        }
-                    } else {
-                        panic!("can't find nodes {:?} and {:?}", id, id2);
-                    }
+                    let rhs = self.multiplicative_expression(ctrl);
+                    total = Rc::new(RefCell::new(Node::Sub {
+                        ctrl: ctrl.clone(),
+                        lhs: total,
+                        rhs: rhs,
+                    }))
                 }
                 None => {
-                    panic!("unexpected end of source");
+                    panic!("additive expression: unexpected end of source");
                 }
                 _ => break,
             }
         }
-        id
+        total
     }
 
-    fn parse_multiplicative_expression(&mut self) -> GenIndex {
-        let mut id = self.parse_unary_expression();
+    fn multiplicative_expression(&mut self, ctrl: &Rc<RefCell<Node>>) -> Rc<RefCell<Node>> {
+        let mut total = self.unary_expression(ctrl);
         loop {
-            match self.peeked {
+            match self.current {
                 Some(Token::Star) => {
                     self.consume();
-                    let id2 = self.parse_unary_expression();
-                    if let (Some(ref mut node), Some(ref mut node2)) = self.arena.get2_mut(id, id2)
-                    {
-                        if let Node::Constant { ref mut value } = node {
-                            if let Node::Constant {
-                                value: ref mut value2,
-                            } = node2
-                            {
-                                *value *= *value2;
-                                self.arena.remove(id2);
-                            } else {
-                                id = self.arena.insert(Node::Mul { id2, id });
-                            }
-                        } else {
-                            id = self.arena.insert(Node::Mul { id, id2 });
-                        }
-                    } else {
-                        panic!("can't find nodes {:?} and {:?}", id, id2);
-                    }
+                    let rhs = self.unary_expression(ctrl);
+                    total = Rc::new(RefCell::new(Node::Mul {
+                        ctrl: ctrl.clone(),
+                        lhs: total,
+                        rhs: rhs,
+                    }))
                 }
                 Some(Token::Slash) => {
                     self.consume();
-                    let id2 = self.parse_unary_expression();
-                    if let (Some(ref mut node), Some(ref mut node2)) = self.arena.get2_mut(id, id2)
-                    {
-                        if let Node::Constant { ref mut value } = node {
-                            if let Node::Constant {
-                                value: ref mut value2,
-                            } = node2
-                            {
-                                *value /= *value2;
-                                self.arena.remove(id2);
-                            } else {
-                                id = self.arena.insert(Node::Div { id, id2 });
-                            }
-                        } else {
-                            id = self.arena.insert(Node::Div { id, id2 });
-                        }
-                    } else {
-                        panic!("can't find nodes {:?} and {:?}", id, id2);
-                    }
+                    let rhs = self.unary_expression(ctrl);
+                    total = Rc::new(RefCell::new(Node::Div {
+                        ctrl: ctrl.clone(),
+                        lhs: total,
+                        rhs: rhs,
+                    }))
                 }
                 None => {
-                    panic!("unexpected end of source");
+                    panic!("multiplicative expression: unexpected end of source");
                 }
                 _ => break,
             }
         }
-        id
+        total
     }
 
-    fn parse_unary_expression(&mut self) -> GenIndex {
-        if let Some(Token::Minus) = self.peeked {
+    fn unary_expression(&mut self, ctrl: &Rc<RefCell<Node>>) -> Rc<RefCell<Node>> {
+        if let Some(Token::Minus) = self.current {
             self.consume();
-            let id = self.parse_unary_expression();
-            if let Node::Constant { ref mut value } = self.arena.get_mut(id) {
-                *value = -*value;
-                id
-            } else {
-                self.arena.insert(Node::Neg { id })
-            }
+            let node = self.unary_expression(ctrl);
+            Rc::new(RefCell::new(Node::Neg {
+                ctrl: ctrl.clone(),
+                node: node,
+            }))
         } else {
-            self.parse_primary_expression()
+            self.primary_expression(ctrl)
         }
     }
 
-    fn parse_primary_expression(&mut self) -> GenIndex {
-        if let Some(Token::OpenParen) = self.peeked {
+    fn primary_expression(&mut self, ctrl: &Rc<RefCell<Node>>) -> Rc<RefCell<Node>> {
+        if let Some(Token::OpenParen) = self.current {
             self.consume();
-            let id = self.parse_expression();
-            if let Some(Token::CloseParen) = self.peeked {
+            let node = self.expression(ctrl);
+            if let Some(Token::CloseParen) = self.current {
                 self.consume();
-                return id;
+                node
             } else {
-                panic!("')' expected");
+                panic!("primary expression: `)` expected");
             }
         } else {
-            match &self.peeked {
+            match &self.current {
                 Some(Token::Integer(value)) => {
                     let value = *value;
                     self.consume();
-                    self.arena.insert(Node::Constant { value })
+                    Rc::new(RefCell::new(Node::Constant { value }))
+                }
+                Some(Token::Identifier(name)) => {
+                    let name = name.clone();
+                    self.consume();
+                    if let Some(node) = self.scopes.get(&name) {
+                        node
+                    } else {
+                        panic!("primary expression: undefined identifier `{}`", name);
+                    }
                 }
                 Some(token) => {
-                    panic!("unexpected `{}`", token);
+                    panic!("primary expression: unexpected `{}`", token);
                 }
                 None => {
-                    panic!("unexpected end of source");
+                    panic!("primary expression: unexpected end of source");
                 }
             }
         }

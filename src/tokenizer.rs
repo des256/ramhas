@@ -81,12 +81,13 @@ impl<'a> Iterator for Tokenizer<'a> {
                     match identifier.as_str() {
                         "fn" => return Some(Token::Fn),
                         "return" => return Some(Token::Return),
+                        "int" => return Some(Token::Int),
                         _ => return Some(Token::Identifier(identifier)),
                     }
                 }
 
                 // punctuation
-                '(' | ')' | '{' | '}' | ';' | '+' | '-' | '*' | '/' => {
+                '(' | ')' | '{' | '}' | ';' | '+' | '-' | '*' | '/' | '=' => {
                     self.consume();
                     self.column += 1;
                     match c {
@@ -99,6 +100,7 @@ impl<'a> Iterator for Tokenizer<'a> {
                         '-' => return Some(Token::Minus),
                         '*' => return Some(Token::Star),
                         '/' => return Some(Token::Slash),
+                        '=' => return Some(Token::Equal),
                         _ => {}
                     }
                 }

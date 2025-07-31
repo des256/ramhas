@@ -10,5 +10,5 @@ pub use parser::*;
 mod node;
 pub use node::*;
 
-mod arena;
-pub use arena::*;
+mod scopes;
+pub use scopes::*;

@@ -1,9 +1,8 @@
 use ramhas::*;
 
 fn main() {
-    let mut parser = Parser::new("return 12 + 19 * 2 - (27 - 4) + 2;");
-    let id = parser.parse_program();
-
-    parser.print_state();
-    println!("result: {:?}", id);
+    let mut parser =
+        Parser::new("int a = 1; int b = 2; int c = a + b; { int b = 3; c = a + b; } return c;");
+    let node = parser.program();
+    println!("result: {}", node.borrow());
 }

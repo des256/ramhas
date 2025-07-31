@@ -1,75 +1,98 @@
-use {generational_arena::Index as GenIndex, std::fmt::Display};
+use std::{cell::RefCell, fmt::Display, rc::Rc};
 
+pub enum Resultlet {
+    Constant { value: i64 },
+    Node { node: Rc<RefCell<Node>> },
+}
+
+#[derive(Clone)]
 pub enum Node {
     Start,
-    Return { ctrl: GenIndex, id: GenIndex },
-    Constant { value: i64 },
-    Add { id: GenIndex, id2: GenIndex },
-    Sub { id: GenIndex, id2: GenIndex },
-    Mul { id: GenIndex, id2: GenIndex },
-    Div { id: GenIndex, id2: GenIndex },
-    Neg { id: GenIndex },
+    Scope,
+    Return {
+        ctrl: Rc<RefCell<Node>>,
+        node: Rc<RefCell<Node>>,
+    },
+    Constant {
+        value: i64,
+    },
+    Add {
+        ctrl: Rc<RefCell<Node>>,
+        lhs: Rc<RefCell<Node>>,
+        rhs: Rc<RefCell<Node>>,
+    },
+    Sub {
+        ctrl: Rc<RefCell<Node>>,
+        lhs: Rc<RefCell<Node>>,
+        rhs: Rc<RefCell<Node>>,
+    },
+    Mul {
+        ctrl: Rc<RefCell<Node>>,
+        lhs: Rc<RefCell<Node>>,
+        rhs: Rc<RefCell<Node>>,
+    },
+    Div {
+        ctrl: Rc<RefCell<Node>>,
+        lhs: Rc<RefCell<Node>>,
+        rhs: Rc<RefCell<Node>>,
+    },
+    Neg {
+        ctrl: Rc<RefCell<Node>>,
+        node: Rc<RefCell<Node>>,
+    },
 }
 
 impl Node {
-    pub fn equals(&self, other: &Node) -> bool {
-        match (self, other) {
-            (Node::Start, Node::Start) => true,
-            (
-                Node::Return {
-                    ctrl: ctrl_a,
-                    id: id_a,
-                },
-                Node::Return {
-                    ctrl: ctrl_b,
-                    id: id_b,
-                },
-            ) => (ctrl_a == ctrl_b) && (id_a == id_b),
-            (Node::Constant { value: value_a }, Node::Constant { value: value_b }) => {
-                value_a == value_b
+    pub fn optimize(&self) -> Node {
+        match self {
+            Node::Add { lhs, rhs, .. } => {
+                let lhs = lhs.borrow().optimize();
+                let rhs = rhs.borrow().optimize();
+                match (lhs, rhs) {
+                    (Node::Constant { value: lhs }, Node::Constant { value: rhs }) => {
+                        Node::Constant { value: lhs + rhs }
+                    }
+                    _ => self.clone(),
+                }
             }
-            (
-                Node::Add {
-                    id: id_a,
-                    id2: id2_a,
-                },
-                Node::Add {
-                    id: id_b,
-                    id2: id2_b,
-                },
-            ) => (id_a == id_b) && (id2_a == id2_b),
-            (
-                Node::Sub {
-                    id: id_a,
-                    id2: id2_a,
-                },
-                Node::Sub {
-                    id: id_b,
-                    id2: id2_b,
-                },
-            ) => (id_a == id_b) && (id2_a == id2_b),
-            (
-                Node::Mul {
-                    id: id_a,
-                    id2: id2_a,
-                },
-                Node::Mul {
-                    id: id_b,
-                    id2: id2_b,
-                },
-            ) => (id_a == id_b) && (id2_a == id2_b),
-            (
-                Node::Div {
-                    id: id_a,
-                    id2: id2_a,
-                },
-                Node::Div {
-                    id: id_b,
-                    id2: id2_b,
-                },
-            ) => (id_a == id_b) && (id2_a == id2_b),
-            (Node::Neg { id: id_a }, Node::Neg { id: id_b }) => id_a == id_b,
-            _ => false,
+            Node::Sub { lhs, rhs, .. } => {
+                let lhs = lhs.borrow().optimize();
+                let rhs = rhs.borrow().optimize();
+                match (lhs, rhs) {
+                    (Node::Constant { value: lhs }, Node::Constant { value: rhs }) => {
+                        Node::Constant { value: lhs - rhs }
+                    }
+                    _ => self.clone(),
+                }
+            }
+            Node::Mul { lhs, rhs, .. } => {
+                let lhs = lhs.borrow().optimize();
+                let rhs = rhs.borrow().optimize();
+                match (lhs, rhs) {
+                    (Node::Constant { value: lhs }, Node::Constant { value: rhs }) => {
+                        Node::Constant { value: lhs * rhs }
+                    }
+                    _ => self.clone(),
+                }
+            }
+            Node::Div { lhs, rhs, .. } => {
+                let lhs = lhs.borrow().optimize();
+                let rhs = rhs.borrow().optimize();
+                match (lhs, rhs) {
+                    (Node::Constant { value: lhs }, Node::Constant { value: rhs }) => {
+                        Node::Constant { value: lhs / rhs }
+                    }
+                    _ => self.clone(),
+                }
+            }
+            Node::Neg { node, .. } => {
+                let node = node.borrow().optimize();
+                match node {
+                    Node::Constant { value } => Node::Constant { value: -value },
+                    _ => self.clone(),
+                }
+            }
+            _ => self.clone(),
         }
     }
 }
@@ -78,24 +101,30 @@ impl Display for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Node::Start => write!(f, "Start"),
-            Node::Return { ctrl, id } => {
-                write!(f, "Return({:?} from {:?})", id, ctrl)
+            Node::Scope => write!(f, "Scope"),
+            Node::Return { ctrl, node } => {
+                write!(
+                    f,
+                    "{:016x}: Return({})",
+                    ctrl.as_ptr() as u64,
+                    node.borrow()
+                )
             }
             Node::Constant { value } => write!(f, "Constant({})", value),
-            Node::Add { id, id2 } => {
-                write!(f, "Add({:?},{:?})", id, id2)
+            Node::Add { lhs, rhs, .. } => {
+                write!(f, "Add({},{})", lhs.borrow(), rhs.borrow())
             }
-            Node::Sub { id, id2 } => {
-                write!(f, "Sub({:?},{:?})", id, id2)
+            Node::Sub { lhs, rhs, .. } => {
+                write!(f, "Sub({},{})", lhs.borrow(), rhs.borrow())
             }
-            Node::Mul { id, id2 } => {
-                write!(f, "Mul({:?},{:?})", id, id2)
+            Node::Mul { lhs, rhs, .. } => {
+                write!(f, "Mul({},{})", lhs.borrow(), rhs.borrow())
             }
-            Node::Div { id, id2 } => {
-                write!(f, "Div({:?},{:?})", id, id2)
+            Node::Div { lhs, rhs, .. } => {
+                write!(f, "Div({},{})", lhs.borrow(), rhs.borrow())
             }
-            Node::Neg { id } => {
-                write!(f, "Neg({:?})", id)
+            Node::Neg { node, .. } => {
+                write!(f, "Neg({})", node.borrow())
             }
         }
     }

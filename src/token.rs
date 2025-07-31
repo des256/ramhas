@@ -1,5 +1,7 @@
 use std::fmt::Display;
 
+#[derive(Clone, PartialEq, Eq)]
+
 pub enum Token {
     Eof,
     Integer(i64),
@@ -13,8 +15,10 @@ pub enum Token {
     OpenBrace,
     CloseBrace,
     Semicolon,
+    Equal,
     Fn,
     Return,
+    Int,
 }
 
 impl Display for Token {
@@ -32,8 +36,10 @@ impl Display for Token {
             Token::OpenBrace => write!(f, "{{"),
             Token::CloseBrace => write!(f, "}}"),
             Token::Semicolon => write!(f, ";"),
+            Token::Equal => write!(f, "="),
             Token::Fn => write!(f, "fn"),
             Token::Return => write!(f, "return"),
+            Token::Int => write!(f, "int"),
         }
     }
 }
