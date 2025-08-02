@@ -1,24 +1,18 @@
 use {
     crate::*,
-    std::{cell::RefCell, rc::Rc},
+    std::{cell::RefCell, path::Path, rc::Rc},
 };
 
 pub struct Parser<'a> {
     tokenizer: Tokenizer<'a>,
     current: Option<Token>,
-    scopes: Scopes,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(source: &'a str) -> Self {
         let mut tokenizer = Tokenizer::new(source);
         let current = tokenizer.next();
-        let scopes = Scopes::new();
-        Self {
-            tokenizer,
-            current,
-            scopes,
-        }
+        Self { tokenizer, current }
     }
 
     pub fn print_tokens(&mut self) {
@@ -44,14 +38,29 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn program(&mut self) -> Rc<RefCell<Node>> {
-        let ctrl = Rc::new(RefCell::new(Node::Start));
-        self.scopes.push();
-        let mut result: Option<Rc<RefCell<Node>>> = None;
+    pub fn program(&mut self) -> Rc<RefCell<Ctrl>> {
+        let ctrl = Rc::new(RefCell::new(Ctrl::Start {
+            args: vec![],
+            scopes: Scopes::new(),
+        }));
+        if let Ctrl::Start { ref mut scopes, .. } = &mut *ctrl.borrow_mut() {
+            scopes.push();
+        }
+        // TODO: add args to scope as Proj
+        let mut result: Option<Rc<RefCell<Ctrl>>> = None;
+        let mut i = 0;
         while let Some(_) = self.current {
             result = self.statement(&ctrl);
+            if let Some(result) = &result {
+                visualize(&result, Path::new(&format!("test{}.svg", i))).unwrap();
+            } else {
+                visualize(&ctrl, Path::new(&format!("test{}.svg", i))).unwrap();
+            }
+            i += 1;
         }
-        self.scopes.pop();
+        if let Ctrl::Start { ref mut scopes, .. } = &mut *ctrl.borrow_mut() {
+            scopes.pop();
+        }
         if let Some(result) = result {
             result
         } else {
@@ -59,7 +68,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn statement(&mut self, ctrl: &Rc<RefCell<Node>>) -> Option<Rc<RefCell<Node>>> {
+    fn statement(&mut self, ctrl: &Rc<RefCell<Ctrl>>) -> Option<Rc<RefCell<Ctrl>>> {
         match &self.current {
             Some(Token::Return) => Some(self.return_statement(ctrl)),
             Some(Token::Int) => {
@@ -79,18 +88,18 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn return_statement(&mut self, ctrl: &Rc<RefCell<Node>>) -> Rc<RefCell<Node>> {
+    fn return_statement(&mut self, ctrl: &Rc<RefCell<Ctrl>>) -> Rc<RefCell<Ctrl>> {
         self.expect(Token::Return);
-        let node = self.expression(ctrl);
-        let node = Rc::new(RefCell::new(Node::Return {
+        let expr = self.expression(ctrl);
+        let result = Rc::new(RefCell::new(Ctrl::Return {
             ctrl: ctrl.clone(),
-            node,
+            expr,
         }));
         self.expect(Token::Semicolon);
-        node
+        result
     }
 
-    fn declaration_statement(&mut self, ctrl: &Rc<RefCell<Node>>) {
+    fn declaration_statement(&mut self, ctrl: &Rc<RefCell<Ctrl>>) {
         self.expect(Token::Int);
         let name = if let Some(Token::Identifier(name)) = &self.current {
             name.clone()
@@ -99,14 +108,14 @@ impl<'a> Parser<'a> {
         };
         self.consume(); // name
         self.expect(Token::Equal);
-        let node = self.expression(ctrl);
+        let expr = self.expression(ctrl);
         self.expect(Token::Semicolon);
-        self.scopes.declare(&name, node);
+        ctrl.borrow_mut().declare_symbol(&name, expr);
     }
 
-    fn block_statement(&mut self, ctrl: &Rc<RefCell<Node>>) {
+    fn block_statement(&mut self, ctrl: &Rc<RefCell<Ctrl>>) {
         self.expect(Token::OpenBrace);
-        self.scopes.push();
+        ctrl.borrow_mut().push_scope();
         loop {
             match self.current {
                 Some(Token::CloseBrace) => {
@@ -121,32 +130,32 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        self.scopes.pop();
+        ctrl.borrow_mut().pop_scope();
     }
 
-    fn expression_statement(&mut self, ctrl: &Rc<RefCell<Node>>, name: &str) {
+    fn expression_statement(&mut self, ctrl: &Rc<RefCell<Ctrl>>, name: &str) {
         self.consume(); // identifier
         self.expect(Token::Equal);
-        let node = self.expression(ctrl);
+        let expr = self.expression(ctrl);
         self.expect(Token::Semicolon);
-        self.scopes.set(name, node);
+        ctrl.borrow_mut().set_symbol(name, expr);
     }
 
-    fn expression(&mut self, ctrl: &Rc<RefCell<Node>>) -> Rc<RefCell<Node>> {
-        let node = self.additive_expression(ctrl);
-        node.borrow_mut().optimize();
-        node
+    fn expression(&mut self, ctrl: &Rc<RefCell<Ctrl>>) -> Rc<RefCell<Expr>> {
+        let expr = self.additive_expression(ctrl);
+        //let new_expr = expr.borrow().peephole_optimize();
+        //*expr.borrow_mut() = new_expr;
+        expr
     }
 
-    fn additive_expression(&mut self, ctrl: &Rc<RefCell<Node>>) -> Rc<RefCell<Node>> {
+    fn additive_expression(&mut self, ctrl: &Rc<RefCell<Ctrl>>) -> Rc<RefCell<Expr>> {
         let mut total = self.multiplicative_expression(ctrl);
         loop {
             match self.current {
                 Some(Token::Plus) => {
                     self.consume();
                     let rhs = self.multiplicative_expression(ctrl);
-                    total = Rc::new(RefCell::new(Node::Add {
-                        ctrl: ctrl.clone(),
+                    total = Rc::new(RefCell::new(Expr::Add {
                         lhs: total,
                         rhs: rhs,
                     }))
@@ -154,8 +163,7 @@ impl<'a> Parser<'a> {
                 Some(Token::Minus) => {
                     self.consume();
                     let rhs = self.multiplicative_expression(ctrl);
-                    total = Rc::new(RefCell::new(Node::Sub {
-                        ctrl: ctrl.clone(),
+                    total = Rc::new(RefCell::new(Expr::Sub {
                         lhs: total,
                         rhs: rhs,
                     }))
@@ -169,15 +177,14 @@ impl<'a> Parser<'a> {
         total
     }
 
-    fn multiplicative_expression(&mut self, ctrl: &Rc<RefCell<Node>>) -> Rc<RefCell<Node>> {
+    fn multiplicative_expression(&mut self, ctrl: &Rc<RefCell<Ctrl>>) -> Rc<RefCell<Expr>> {
         let mut total = self.unary_expression(ctrl);
         loop {
             match self.current {
                 Some(Token::Star) => {
                     self.consume();
                     let rhs = self.unary_expression(ctrl);
-                    total = Rc::new(RefCell::new(Node::Mul {
-                        ctrl: ctrl.clone(),
+                    total = Rc::new(RefCell::new(Expr::Mul {
                         lhs: total,
                         rhs: rhs,
                     }))
@@ -185,8 +192,7 @@ impl<'a> Parser<'a> {
                 Some(Token::Slash) => {
                     self.consume();
                     let rhs = self.unary_expression(ctrl);
-                    total = Rc::new(RefCell::new(Node::Div {
-                        ctrl: ctrl.clone(),
+                    total = Rc::new(RefCell::new(Expr::Div {
                         lhs: total,
                         rhs: rhs,
                     }))
@@ -200,26 +206,23 @@ impl<'a> Parser<'a> {
         total
     }
 
-    fn unary_expression(&mut self, ctrl: &Rc<RefCell<Node>>) -> Rc<RefCell<Node>> {
+    fn unary_expression(&mut self, ctrl: &Rc<RefCell<Ctrl>>) -> Rc<RefCell<Expr>> {
         if let Some(Token::Minus) = self.current {
             self.consume();
-            let node = self.unary_expression(ctrl);
-            Rc::new(RefCell::new(Node::Neg {
-                ctrl: ctrl.clone(),
-                node: node,
-            }))
+            let expr = self.unary_expression(ctrl);
+            Rc::new(RefCell::new(Expr::Neg { expr }))
         } else {
             self.primary_expression(ctrl)
         }
     }
 
-    fn primary_expression(&mut self, ctrl: &Rc<RefCell<Node>>) -> Rc<RefCell<Node>> {
+    fn primary_expression(&mut self, ctrl: &Rc<RefCell<Ctrl>>) -> Rc<RefCell<Expr>> {
         if let Some(Token::OpenParen) = self.current {
             self.consume();
-            let node = self.expression(ctrl);
+            let expr = self.expression(ctrl);
             if let Some(Token::CloseParen) = self.current {
                 self.consume();
-                node
+                expr
             } else {
                 panic!("primary expression: `)` expected");
             }
@@ -228,13 +231,18 @@ impl<'a> Parser<'a> {
                 Some(Token::Integer(value)) => {
                     let value = *value;
                     self.consume();
-                    Rc::new(RefCell::new(Node::Constant { value }))
+                    Rc::new(RefCell::new(Expr::Constant {
+                        value: Value {
+                            ty: Ty::Int,
+                            data: Data::Int(value),
+                        },
+                    }))
                 }
                 Some(Token::Identifier(name)) => {
                     let name = name.clone();
                     self.consume();
-                    if let Some(node) = self.scopes.get(&name) {
-                        node
+                    if let Some(expr) = ctrl.borrow().symbol(&name) {
+                        expr
                     } else {
                         panic!("primary expression: undefined identifier `{}`", name);
                     }

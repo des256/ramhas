@@ -5,4 +5,5 @@ author = ["Desmond Germans <desmond@germansmedia.nl>"]
 edition = "2021"
 
 [dependencies]
-generational-arena = "0.2.9"
+anyhow = "1.0.98"
+graphviz-rust = "0.9.5"
