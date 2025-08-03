@@ -10,7 +10,7 @@ pub enum Expr {
         index: usize,
     },
     Constant {
-        value: Value,
+        value: i64,
     },
     Add {
         lhs: Rc<RefCell<Expr>>,
@@ -31,23 +31,58 @@ pub enum Expr {
     Neg {
         expr: Rc<RefCell<Expr>>,
     },
+    Not {
+        expr: Rc<RefCell<Expr>>,
+    },
+    Equal {
+        lhs: Rc<RefCell<Expr>>,
+        rhs: Rc<RefCell<Expr>>,
+    },
+    NotEqual {
+        lhs: Rc<RefCell<Expr>>,
+        rhs: Rc<RefCell<Expr>>,
+    },
+    LessThan {
+        lhs: Rc<RefCell<Expr>>,
+        rhs: Rc<RefCell<Expr>>,
+    },
+    LessThanOrEqual {
+        lhs: Rc<RefCell<Expr>>,
+        rhs: Rc<RefCell<Expr>>,
+    },
+    GreaterThan {
+        lhs: Rc<RefCell<Expr>>,
+        rhs: Rc<RefCell<Expr>>,
+    },
+    GreaterThanOrEqual {
+        lhs: Rc<RefCell<Expr>>,
+        rhs: Rc<RefCell<Expr>>,
+    },
 }
 
 impl Expr {
     pub fn peephole_optimize(&self) -> Expr {
         match self {
             Expr::Add { lhs, rhs } => {
-                let lhs = lhs.borrow().clone();
-                let rhs = rhs.borrow().clone();
+                let lhs = lhs.borrow().peephole_optimize();
+                let rhs = rhs.borrow().peephole_optimize();
                 match (lhs, rhs) {
+                    // constant + constant -> constant
                     (Expr::Constant { value: lhs, .. }, Expr::Constant { value: rhs, .. }) => {
-                        if let (Data::Int(lhs), Data::Int(rhs)) = (lhs.data, rhs.data) {
-                            Expr::Constant {
-                                value: Value {
-                                    ty: Ty::Int,
-                                    data: Data::Int(lhs + rhs),
-                                },
-                            }
+                        Expr::Constant { value: lhs + rhs }
+                    }
+                    // 0 + expr -> expr
+                    (Expr::Constant { value: lhs, .. }, rhs) => {
+                        if lhs == 0 {
+                            rhs.peephole_optimize()
+                        } else {
+                            self.clone()
+                        }
+                    }
+                    // expr + 0 -> expr
+                    (lhs, Expr::Constant { value: rhs, .. }) => {
+                        if rhs == 0 {
+                            lhs.peephole_optimize()
                         } else {
                             self.clone()
                         }
@@ -56,17 +91,27 @@ impl Expr {
                 }
             }
             Expr::Sub { lhs, rhs } => {
-                let lhs = lhs.borrow().clone();
-                let rhs = rhs.borrow().clone();
+                let lhs = lhs.borrow().peephole_optimize();
+                let rhs = rhs.borrow().peephole_optimize();
                 match (lhs, rhs) {
+                    // constant - constant -> constant
                     (Expr::Constant { value: lhs, .. }, Expr::Constant { value: rhs, .. }) => {
-                        if let (Data::Int(lhs), Data::Int(rhs)) = (lhs.data, rhs.data) {
-                            Expr::Constant {
-                                value: Value {
-                                    ty: Ty::Int,
-                                    data: Data::Int(lhs - rhs),
-                                },
+                        Expr::Constant { value: lhs - rhs }
+                    }
+                    // 0 - expr -> -expr
+                    (Expr::Constant { value: lhs, .. }, rhs) => {
+                        if lhs == 0 {
+                            Expr::Neg {
+                                expr: Rc::new(RefCell::new(rhs.peephole_optimize())),
                             }
+                        } else {
+                            self.clone()
+                        }
+                    }
+                    // expr - 0 -> expr
+                    (lhs, Expr::Constant { value: rhs, .. }) => {
+                        if rhs == 0 {
+                            lhs.peephole_optimize()
                         } else {
                             self.clone()
                         }
@@ -75,17 +120,25 @@ impl Expr {
                 }
             }
             Expr::Mul { lhs, rhs } => {
-                let lhs = lhs.borrow().clone();
-                let rhs = rhs.borrow().clone();
+                let lhs = lhs.borrow().peephole_optimize();
+                let rhs = rhs.borrow().peephole_optimize();
                 match (lhs, rhs) {
+                    // constant * constant -> constant
                     (Expr::Constant { value: lhs, .. }, Expr::Constant { value: rhs, .. }) => {
-                        if let (Data::Int(lhs), Data::Int(rhs)) = (lhs.data, rhs.data) {
-                            Expr::Constant {
-                                value: Value {
-                                    ty: Ty::Int,
-                                    data: Data::Int(lhs * rhs),
-                                },
-                            }
+                        Expr::Constant { value: lhs * rhs }
+                    }
+                    // 1 * expr -> expr
+                    (Expr::Constant { value: lhs, .. }, rhs) => {
+                        if lhs == 1 {
+                            rhs.peephole_optimize()
+                        } else {
+                            self.clone()
+                        }
+                    }
+                    // expr * 1 -> expr
+                    (lhs, Expr::Constant { value: rhs, .. }) => {
+                        if rhs == 1 {
+                            lhs.peephole_optimize()
                         } else {
                             self.clone()
                         }
@@ -94,17 +147,17 @@ impl Expr {
                 }
             }
             Expr::Div { lhs, rhs } => {
-                let lhs = lhs.borrow().clone();
-                let rhs = rhs.borrow().clone();
+                let lhs = lhs.borrow().peephole_optimize();
+                let rhs = rhs.borrow().peephole_optimize();
                 match (lhs, rhs) {
+                    // constant / constant = constant
                     (Expr::Constant { value: lhs, .. }, Expr::Constant { value: rhs, .. }) => {
-                        if let (Data::Int(lhs), Data::Int(rhs)) = (lhs.data, rhs.data) {
-                            Expr::Constant {
-                                value: Value {
-                                    ty: Ty::Int,
-                                    data: Data::Int(lhs / rhs),
-                                },
-                            }
+                        Expr::Constant { value: lhs / rhs }
+                    }
+                    // expr / 1 -> expr
+                    (lhs, Expr::Constant { value: rhs, .. }) => {
+                        if rhs == 1 {
+                            lhs.peephole_optimize()
                         } else {
                             self.clone()
                         }
@@ -113,20 +166,10 @@ impl Expr {
                 }
             }
             Expr::Neg { expr } => {
-                let expr = expr.borrow().clone();
+                let expr = expr.borrow().peephole_optimize();
                 match expr {
-                    Expr::Constant { value, .. } => {
-                        if let Data::Int(value) = value.data {
-                            Expr::Constant {
-                                value: Value {
-                                    ty: Ty::Int,
-                                    data: Data::Int(-value),
-                                },
-                            }
-                        } else {
-                            self.clone()
-                        }
-                    }
+                    // -constant -> constant
+                    Expr::Constant { value, .. } => Expr::Constant { value: -value },
                     _ => self.clone(),
                 }
             }
@@ -156,6 +199,27 @@ impl Display for Expr {
             }
             Expr::Neg { expr } => {
                 write!(f, "-({})", expr.borrow())
+            }
+            Expr::Not { expr } => {
+                write!(f, "!({})", expr.borrow())
+            }
+            Expr::Equal { lhs, rhs } => {
+                write!(f, "({} == {})", lhs.borrow(), rhs.borrow())
+            }
+            Expr::NotEqual { lhs, rhs } => {
+                write!(f, "({} != {})", lhs.borrow(), rhs.borrow())
+            }
+            Expr::LessThan { lhs, rhs } => {
+                write!(f, "({} < {})", lhs.borrow(), rhs.borrow())
+            }
+            Expr::LessThanOrEqual { lhs, rhs } => {
+                write!(f, "({} <= {})", lhs.borrow(), rhs.borrow())
+            }
+            Expr::GreaterThan { lhs, rhs } => {
+                write!(f, "({} > {})", lhs.borrow(), rhs.borrow())
+            }
+            Expr::GreaterThanOrEqual { lhs, rhs } => {
+                write!(f, "({} >= {})", lhs.borrow(), rhs.borrow())
             }
         }
     }

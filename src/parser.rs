@@ -6,13 +6,18 @@ use {
 pub struct Parser<'a> {
     tokenizer: Tokenizer<'a>,
     current: Option<Token>,
+    pi: usize,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(source: &'a str) -> Self {
         let mut tokenizer = Tokenizer::new(source);
         let current = tokenizer.next();
-        Self { tokenizer, current }
+        Self {
+            tokenizer,
+            current,
+            pi: 0,
+        }
     }
 
     pub fn print_tokens(&mut self) {
@@ -48,15 +53,8 @@ impl<'a> Parser<'a> {
         }
         // TODO: add args to scope as Proj
         let mut result: Option<Rc<RefCell<Ctrl>>> = None;
-        let mut i = 0;
         while let Some(_) = self.current {
             result = self.statement(&ctrl);
-            if let Some(result) = &result {
-                visualize(&result, Path::new(&format!("test{}.svg", i))).unwrap();
-            } else {
-                visualize(&ctrl, Path::new(&format!("test{}.svg", i))).unwrap();
-            }
-            i += 1;
         }
         if let Ctrl::Start { ref mut scopes, .. } = &mut *ctrl.borrow_mut() {
             scopes.pop();
@@ -69,82 +67,81 @@ impl<'a> Parser<'a> {
     }
 
     fn statement(&mut self, ctrl: &Rc<RefCell<Ctrl>>) -> Option<Rc<RefCell<Ctrl>>> {
-        match &self.current {
-            Some(Token::Return) => Some(self.return_statement(ctrl)),
+        let mut title = String::new();
+        let result = match &self.current {
+            Some(Token::Return) => {
+                self.expect(Token::Return);
+                let expr = self.expression(ctrl);
+                title = format!("return {};", expr.borrow().to_string());
+                let result = Rc::new(RefCell::new(Ctrl::Return {
+                    ctrl: ctrl.clone(),
+                    expr,
+                }));
+                self.expect(Token::Semicolon);
+                Some(result)
+            }
             Some(Token::Int) => {
-                self.declaration_statement(ctrl);
+                self.expect(Token::Int);
+                let name = if let Some(Token::Identifier(name)) = &self.current {
+                    name.clone()
+                } else {
+                    panic!("declaration statement: identifier expected");
+                };
+                self.consume(); // name
+                self.expect(Token::Equal);
+                let expr = self.expression(ctrl);
+                title = format!("int {} = {};", name, expr.borrow().to_string());
+                self.expect(Token::Semicolon);
+                ctrl.borrow_mut().declare_symbol(&name, expr);
                 None
             }
             Some(Token::OpenBrace) => {
-                self.block_statement(ctrl);
+                self.expect(Token::OpenBrace);
+                ctrl.borrow_mut().push_scope();
+                loop {
+                    match self.current {
+                        Some(Token::CloseBrace) => {
+                            self.consume();
+                            break;
+                        }
+                        None => {
+                            panic!("block statement: unexpected end of source");
+                        }
+                        _ => {
+                            let result = self.statement(&ctrl);
+                        }
+                    }
+                }
+                ctrl.borrow_mut().pop_scope();
+                title = "{}".to_string();
                 None
             }
             Some(Token::Identifier(name)) => {
-                self.expression_statement(ctrl, &name.clone());
+                let name = name.clone();
+                self.consume(); // identifier
+                self.expect(Token::Equal);
+                let expr = self.expression(ctrl);
+                title = format!("{} = {};", name, expr.borrow().to_string());
+                self.expect(Token::Semicolon);
+                ctrl.borrow_mut().set_symbol(&name, expr);
                 None
             }
             Some(token) => panic!("statement: unexpected `{}`", token),
             None => panic!("statement: unexpected end of source"),
-        }
-    }
-
-    fn return_statement(&mut self, ctrl: &Rc<RefCell<Ctrl>>) -> Rc<RefCell<Ctrl>> {
-        self.expect(Token::Return);
-        let expr = self.expression(ctrl);
-        let result = Rc::new(RefCell::new(Ctrl::Return {
-            ctrl: ctrl.clone(),
-            expr,
-        }));
-        self.expect(Token::Semicolon);
-        result
-    }
-
-    fn declaration_statement(&mut self, ctrl: &Rc<RefCell<Ctrl>>) {
-        self.expect(Token::Int);
-        let name = if let Some(Token::Identifier(name)) = &self.current {
-            name.clone()
-        } else {
-            panic!("declaration statement: identifier expected");
         };
-        self.consume(); // name
-        self.expect(Token::Equal);
-        let expr = self.expression(ctrl);
-        self.expect(Token::Semicolon);
-        ctrl.borrow_mut().declare_symbol(&name, expr);
-    }
-
-    fn block_statement(&mut self, ctrl: &Rc<RefCell<Ctrl>>) {
-        self.expect(Token::OpenBrace);
-        ctrl.borrow_mut().push_scope();
-        loop {
-            match self.current {
-                Some(Token::CloseBrace) => {
-                    self.consume();
-                    break;
-                }
-                None => {
-                    panic!("block statement: unexpected end of source");
-                }
-                _ => {
-                    self.statement(ctrl);
-                }
-            }
+        if let Some(result) = &result {
+            visualize(&result, &title, Path::new(&format!("test{}.svg", self.pi))).unwrap();
+        } else {
+            visualize(&ctrl, &title, Path::new(&format!("test{}.svg", self.pi))).unwrap();
         }
-        ctrl.borrow_mut().pop_scope();
-    }
-
-    fn expression_statement(&mut self, ctrl: &Rc<RefCell<Ctrl>>, name: &str) {
-        self.consume(); // identifier
-        self.expect(Token::Equal);
-        let expr = self.expression(ctrl);
-        self.expect(Token::Semicolon);
-        ctrl.borrow_mut().set_symbol(name, expr);
+        self.pi += 1;
+        result
     }
 
     fn expression(&mut self, ctrl: &Rc<RefCell<Ctrl>>) -> Rc<RefCell<Expr>> {
         let expr = self.additive_expression(ctrl);
-        //let new_expr = expr.borrow().peephole_optimize();
-        //*expr.borrow_mut() = new_expr;
+        let new_expr = expr.borrow().peephole_optimize();
+        *expr.borrow_mut() = new_expr;
         expr
     }
 
@@ -231,12 +228,7 @@ impl<'a> Parser<'a> {
                 Some(Token::Integer(value)) => {
                     let value = *value;
                     self.consume();
-                    Rc::new(RefCell::new(Expr::Constant {
-                        value: Value {
-                            ty: Ty::Int,
-                            data: Data::Int(value),
-                        },
-                    }))
+                    Rc::new(RefCell::new(Expr::Constant { value }))
                 }
                 Some(Token::Identifier(name)) => {
                     let name = name.clone();

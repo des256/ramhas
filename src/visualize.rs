@@ -117,9 +117,9 @@ impl Visualizer {
             attributes: Vec::new(),
         };
         add_attr(&mut node.attributes, "shape", "record");
-        let mut label = "\"{Scopes|{".to_string();
+        let mut label = "\"{Scopes".to_string();
         for (i, bindings) in scopes.bindings.iter().enumerate() {
-            label.push_str(&format!("<scope{}>{}|{{", i, i));
+            label.push_str(&format!("|{{<scope{}>{}|{{", i, i));
             let mut first = true;
             for (name, expr) in bindings.iter() {
                 if first {
@@ -136,9 +136,9 @@ impl Visualizer {
                     false,
                 );
             }
-            label.push_str("}");
+            label.push_str("}}");
         }
-        label.push_str("}}\"");
+        label.push_str("}\"");
         add_attr(&mut node.attributes, "label", &label);
         self.nodes.insert(index, node);
         scopes_id
@@ -245,12 +245,59 @@ impl Visualizer {
                 let expr_id = self.add_expr(expr);
                 self.add_n2n(&gen_id, &expr_id, false);
             }
+            Expr::Not { expr } => {
+                add_attr(&mut node.attributes, "label", "\"!\"");
+                let expr_id = self.add_expr(expr);
+                self.add_n2n(&gen_id, &expr_id, false);
+            }
+            Expr::Equal { lhs, rhs } => {
+                add_attr(&mut node.attributes, "label", "\"==\"");
+                let lhs_id = self.add_expr(lhs);
+                let rhs_id = self.add_expr(rhs);
+                self.add_n2n(&gen_id, &lhs_id, false);
+                self.add_n2n(&gen_id, &rhs_id, false);
+            }
+            Expr::NotEqual { lhs, rhs } => {
+                add_attr(&mut node.attributes, "label", "\"!=\"");
+                let lhs_id = self.add_expr(lhs);
+                let rhs_id = self.add_expr(rhs);
+                self.add_n2n(&gen_id, &lhs_id, false);
+                self.add_n2n(&gen_id, &rhs_id, false);
+            }
+            Expr::LessThan { lhs, rhs } => {
+                add_attr(&mut node.attributes, "label", "\"<\"");
+                let lhs_id = self.add_expr(lhs);
+                let rhs_id = self.add_expr(rhs);
+                self.add_n2n(&gen_id, &lhs_id, false);
+                self.add_n2n(&gen_id, &rhs_id, false);
+            }
+            Expr::LessThanOrEqual { lhs, rhs } => {
+                add_attr(&mut node.attributes, "label", "\"<=\"");
+                let lhs_id = self.add_expr(lhs);
+                let rhs_id = self.add_expr(rhs);
+                self.add_n2n(&gen_id, &lhs_id, false);
+                self.add_n2n(&gen_id, &rhs_id, false);
+            }
+            Expr::GreaterThan { lhs, rhs } => {
+                add_attr(&mut node.attributes, "label", "\">\"");
+                let lhs_id = self.add_expr(lhs);
+                let rhs_id = self.add_expr(rhs);
+                self.add_n2n(&gen_id, &lhs_id, false);
+                self.add_n2n(&gen_id, &rhs_id, false);
+            }
+            Expr::GreaterThanOrEqual { lhs, rhs } => {
+                add_attr(&mut node.attributes, "label", "\">=\"");
+                let lhs_id = self.add_expr(lhs);
+                let rhs_id = self.add_expr(rhs);
+                self.add_n2n(&gen_id, &lhs_id, false);
+                self.add_n2n(&gen_id, &rhs_id, false);
+            }
         }
         self.nodes.insert(index, node);
         gen_id
     }
 
-    fn generate_graph(&self, path: &Path) -> Result<()> {
+    fn generate_graph(&self, title: &str, path: &Path) -> Result<()> {
         let mut stmts = Vec::<Stmt>::new();
         for node in self.nodes.values() {
             stmts.push(Stmt::Node(node.clone()));
@@ -262,13 +309,16 @@ impl Visualizer {
             Id::Plain("rankdir".to_string()),
             Id::Plain("BT".to_string()),
         )));
+        stmts.push(Stmt::Attribute(Attribute(
+            Id::Plain("label".to_string()),
+            Id::Plain(format!("\"{}\"", title)),
+        )));
         let graph = Graph::DiGraph {
             id: Id::Plain("G".to_string()),
             strict: false,
             stmts: stmts,
         };
         let mut ctx = PrinterContext::default();
-        println!("{}", print(graph.clone(), &mut ctx));
         let result = exec(graph, &mut ctx, vec![CommandArg::Format(Format::Svg)])
             .map_err(|e| anyhow::anyhow!("{}", e))?;
         let mut file = File::create(path).unwrap();
@@ -277,8 +327,8 @@ impl Visualizer {
     }
 }
 
-pub fn visualize(ctrl: &Rc<RefCell<Ctrl>>, path: &Path) -> Result<()> {
+pub fn visualize(ctrl: &Rc<RefCell<Ctrl>>, title: &str, path: &Path) -> Result<()> {
     let mut visualizer = Visualizer::new();
     visualizer.add_ctrl(ctrl);
-    visualizer.generate_graph(path)
+    visualizer.generate_graph(title, path)
 }
