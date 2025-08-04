@@ -10,13 +10,13 @@ use {
     std::{cell::RefCell, collections::HashMap, fs::File, io::Write, path::Path, rc::Rc},
 };
 
-struct Visualizer {
+pub(crate) struct Visualizer {
     next_id: usize,
     nodes: HashMap<u64, Node>,
     edges: Vec<Edge>,
 }
 
-fn add_attr(attributes: &mut Vec<Attribute>, name: &str, value: &str) {
+pub fn add_attr(attributes: &mut Vec<Attribute>, name: &str, value: &str) {
     attributes.push(Attribute(
         Id::Plain(name.to_string()),
         Id::Plain(value.to_string()),
@@ -49,7 +49,7 @@ impl Visualizer {
         result
     }
 
-    fn add_n2n(&mut self, from: &str, to: &str, red: bool) {
+    pub fn add_n2n(&mut self, from: &str, to: &str, red: bool) {
         self.edges.push(Edge {
             ty: EdgeTy::Pair(
                 Vertex::N(NodeId(Id::Plain(from.to_string()), None)),
@@ -66,7 +66,7 @@ impl Visualizer {
         });
     }
 
-    fn add_n2p(&mut self, from: &str, to: &str, port: &str, red: bool) {
+    pub fn add_n2p(&mut self, from: &str, to: &str, port: &str, red: bool) {
         self.edges.push(Edge {
             ty: EdgeTy::Pair(
                 Vertex::N(NodeId(Id::Plain(from.to_string()), None)),
@@ -86,7 +86,7 @@ impl Visualizer {
         });
     }
 
-    fn add_p2n(&mut self, from: &str, port: &str, to: &str, red: bool) {
+    pub fn add_p2n(&mut self, from: &str, port: &str, to: &str, red: bool) {
         self.edges.push(Edge {
             ty: EdgeTy::Pair(
                 Vertex::N(NodeId(
@@ -106,7 +106,7 @@ impl Visualizer {
         });
     }
 
-    fn add_scopes(&mut self, gen_id: &str, scopes: &Scopes) -> String {
+    pub fn add_scopes(&mut self, gen_id: &str, scopes: &Scopes) -> String {
         let index = (&*scopes as *const Scopes) as u64;
         if self.nodes.contains_key(&index) {
             return self.nodes[&index].id.0.to_string();
@@ -144,8 +144,8 @@ impl Visualizer {
         scopes_id
     }
 
-    fn add_ctrl(&mut self, ctrl: &Rc<RefCell<Ctrl>>) -> String {
-        let index = ctrl.as_ptr() as u64;
+    pub fn add_ctrl(&mut self, ctrl: &Rc<RefCell<dyn Ctrl>>) -> String {
+        let index = ctrl as *const _ as u64;
         if self.nodes.contains_key(&index) {
             return self.nodes[&index].id.0.to_string();
         }
@@ -157,40 +157,14 @@ impl Visualizer {
         add_attr(&mut node.attributes, "shape", "record");
         add_attr(&mut node.attributes, "fillcolor", "yellow");
         add_attr(&mut node.attributes, "style", "filled");
-        match &*ctrl.borrow() {
-            Ctrl::Start { args, scopes } => {
-                let mut label = "\"{Start|{args".to_string();
-                for (i, arg) in args.iter().enumerate() {
-                    let expr_id = self.add_expr(arg);
-                    label.push_str(&format!("|<arg{}>{}", i, expr_id));
-                    self.add_p2n(&gen_id, &format!("arg{}", i), &expr_id, false);
-                }
-                let scopes_id = self.add_scopes(&gen_id, scopes);
-                label.push_str("}}\"");
-                self.add_n2n(&gen_id, &scopes_id, false);
-                add_attr(&mut node.attributes, "label", &label);
-            }
-            Ctrl::Stop { ctrls } => {
-                add_attr(&mut node.attributes, "label", "\"Stop\"");
-                for ctrl in ctrls.iter() {
-                    let ctrl_id = self.add_ctrl(ctrl);
-                    self.add_n2n(&gen_id, &ctrl_id, true);
-                }
-            }
-            Ctrl::Return { ctrl, expr } => {
-                add_attr(&mut node.attributes, "label", "\"Return\"");
-                let ctrl_id = self.add_ctrl(ctrl);
-                self.add_n2n(&gen_id, &ctrl_id, true);
-                let expr_id = self.add_expr(expr);
-                self.add_n2n(&gen_id, &expr_id, false);
-            }
-        }
+        ctrl.borrow_mut()
+            .visualize(&gen_id, self, &mut node.attributes);
         self.nodes.insert(index, node);
         gen_id
     }
 
-    fn add_expr(&mut self, expr: &Rc<RefCell<Expr>>) -> String {
-        let index = expr.as_ptr() as u64;
+    pub fn add_expr(&mut self, expr: &Rc<RefCell<dyn Expr>>) -> String {
+        let index = expr as *const _ as u64;
         if self.nodes.contains_key(&index) {
             return self.nodes[&index].id.0.to_string();
         }
