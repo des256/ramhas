@@ -4,13 +4,13 @@ use {
     graphviz_rust::{
         cmd::{CommandArg, Format},
         dot_structures::{Attribute, Edge, EdgeTy, Graph, Id, Node, NodeId, Port, Stmt, Vertex},
-        exec, print,
+        exec,
         printer::PrinterContext,
     },
     std::{cell::RefCell, collections::HashMap, fs::File, io::Write, path::Path, rc::Rc},
 };
 
-pub(crate) struct Visualizer {
+pub struct Visualizer {
     next_id: usize,
     nodes: HashMap<u64, Node>,
     edges: Vec<Edge>,
@@ -106,8 +106,12 @@ impl Visualizer {
         });
     }
 
-    pub fn add_scopes(&mut self, gen_id: &str, scopes: &Scopes) -> String {
-        let index = (&*scopes as *const Scopes) as u64;
+    pub fn add_bindings(
+        &mut self,
+        _gen_id: &str,
+        bindings: &Rc<RefCell<Vec<HashMap<String, Rc<Expr>>>>>,
+    ) -> String {
+        let index = (&*bindings as *const _) as u64;
         if self.nodes.contains_key(&index) {
             return self.nodes[&index].id.0.to_string();
         }
@@ -117,8 +121,8 @@ impl Visualizer {
             attributes: Vec::new(),
         };
         add_attr(&mut node.attributes, "shape", "record");
-        let mut label = "\"{Scopes".to_string();
-        for (i, bindings) in scopes.bindings.iter().enumerate() {
+        let mut label = "\"{Bindings".to_string();
+        for (i, bindings) in bindings.borrow().iter().enumerate() {
             label.push_str(&format!("|{{<scope{}>{}|{{", i, i));
             let mut first = true;
             for (name, expr) in bindings.iter() {
@@ -144,7 +148,7 @@ impl Visualizer {
         scopes_id
     }
 
-    pub fn add_ctrl(&mut self, ctrl: &Rc<RefCell<dyn Ctrl>>) -> String {
+    pub fn add_ctrl(&mut self, ctrl: &Rc<Ctrl>) -> String {
         let index = ctrl as *const _ as u64;
         if self.nodes.contains_key(&index) {
             return self.nodes[&index].id.0.to_string();
@@ -157,13 +161,12 @@ impl Visualizer {
         add_attr(&mut node.attributes, "shape", "record");
         add_attr(&mut node.attributes, "fillcolor", "yellow");
         add_attr(&mut node.attributes, "style", "filled");
-        ctrl.borrow_mut()
-            .visualize(&gen_id, self, &mut node.attributes);
+        ctrl.visualize(&gen_id, self, &mut node.attributes);
         self.nodes.insert(index, node);
         gen_id
     }
 
-    pub fn add_expr(&mut self, expr: &Rc<RefCell<dyn Expr>>) -> String {
+    pub fn add_expr(&mut self, expr: &Rc<Expr>) -> String {
         let index = expr as *const _ as u64;
         if self.nodes.contains_key(&index) {
             return self.nodes[&index].id.0.to_string();
@@ -173,100 +176,7 @@ impl Visualizer {
             id: NodeId(Id::Plain(gen_id.clone()), None),
             attributes: Vec::new(),
         };
-        match &*expr.borrow() {
-            Expr::Proj { ctrl, index } => {
-                add_attr(
-                    &mut node.attributes,
-                    "label",
-                    &format!("\"Proj {}\"", index),
-                );
-                let ctrl_id = self.add_ctrl(ctrl);
-                self.add_n2n(&gen_id, &ctrl_id, true);
-            }
-            Expr::Constant { value } => {
-                add_attr(&mut node.attributes, "label", &format!("\"{}\"", value));
-            }
-            Expr::Add { lhs, rhs } => {
-                add_attr(&mut node.attributes, "label", "\"+\"");
-                let lhs_id = self.add_expr(lhs);
-                let rhs_id = self.add_expr(rhs);
-                self.add_n2n(&gen_id, &lhs_id, false);
-                self.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::Sub { lhs, rhs } => {
-                add_attr(&mut node.attributes, "label", "\"-\"");
-                let lhs_id = self.add_expr(lhs);
-                let rhs_id = self.add_expr(rhs);
-                self.add_n2n(&gen_id, &lhs_id, false);
-                self.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::Mul { lhs, rhs } => {
-                add_attr(&mut node.attributes, "label", "\"*\"");
-                let lhs_id = self.add_expr(lhs);
-                let rhs_id = self.add_expr(rhs);
-                self.add_n2n(&gen_id, &lhs_id, false);
-                self.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::Div { lhs, rhs } => {
-                add_attr(&mut node.attributes, "label", "\"/\"");
-                let lhs_id = self.add_expr(lhs);
-                let rhs_id = self.add_expr(rhs);
-                self.add_n2n(&gen_id, &lhs_id, false);
-                self.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::Neg { expr } => {
-                add_attr(&mut node.attributes, "label", "\"-\"");
-                let expr_id = self.add_expr(expr);
-                self.add_n2n(&gen_id, &expr_id, false);
-            }
-            Expr::Not { expr } => {
-                add_attr(&mut node.attributes, "label", "\"!\"");
-                let expr_id = self.add_expr(expr);
-                self.add_n2n(&gen_id, &expr_id, false);
-            }
-            Expr::Equal { lhs, rhs } => {
-                add_attr(&mut node.attributes, "label", "\"==\"");
-                let lhs_id = self.add_expr(lhs);
-                let rhs_id = self.add_expr(rhs);
-                self.add_n2n(&gen_id, &lhs_id, false);
-                self.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::NotEqual { lhs, rhs } => {
-                add_attr(&mut node.attributes, "label", "\"!=\"");
-                let lhs_id = self.add_expr(lhs);
-                let rhs_id = self.add_expr(rhs);
-                self.add_n2n(&gen_id, &lhs_id, false);
-                self.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::LessThan { lhs, rhs } => {
-                add_attr(&mut node.attributes, "label", "\"<\"");
-                let lhs_id = self.add_expr(lhs);
-                let rhs_id = self.add_expr(rhs);
-                self.add_n2n(&gen_id, &lhs_id, false);
-                self.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::LessThanOrEqual { lhs, rhs } => {
-                add_attr(&mut node.attributes, "label", "\"<=\"");
-                let lhs_id = self.add_expr(lhs);
-                let rhs_id = self.add_expr(rhs);
-                self.add_n2n(&gen_id, &lhs_id, false);
-                self.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::GreaterThan { lhs, rhs } => {
-                add_attr(&mut node.attributes, "label", "\">\"");
-                let lhs_id = self.add_expr(lhs);
-                let rhs_id = self.add_expr(rhs);
-                self.add_n2n(&gen_id, &lhs_id, false);
-                self.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::GreaterThanOrEqual { lhs, rhs } => {
-                add_attr(&mut node.attributes, "label", "\">=\"");
-                let lhs_id = self.add_expr(lhs);
-                let rhs_id = self.add_expr(rhs);
-                self.add_n2n(&gen_id, &lhs_id, false);
-                self.add_n2n(&gen_id, &rhs_id, false);
-            }
-        }
+        expr.visualize(&gen_id, self, &mut node.attributes);
         self.nodes.insert(index, node);
         gen_id
     }
@@ -301,7 +211,7 @@ impl Visualizer {
     }
 }
 
-pub fn visualize(ctrl: &Rc<RefCell<Ctrl>>, title: &str, path: &Path) -> Result<()> {
+pub fn visualize(ctrl: &Rc<Ctrl>, title: &str, path: &Path) -> Result<()> {
     let mut visualizer = Visualizer::new();
     visualizer.add_ctrl(ctrl);
     visualizer.generate_graph(title, path)

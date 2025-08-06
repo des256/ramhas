@@ -43,30 +43,21 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn program(&mut self) -> Rc<RefCell<dyn Ctrl>> {
-        let ctrl: Rc<RefCell<dyn Ctrl>> = Rc::new(RefCell::new(ctrl::Start::new()));
-        {
-            let mut ctrl_borrowed = ctrl.borrow_mut();
-            (&mut *ctrl_borrowed)
-                .as_any()
-                .downcast_mut::<ctrl::Start>()
-                .unwrap()
-                .push_scope();
-        }
+    pub fn parse_program(&mut self) -> Rc<Ctrl> {
+        let ctrl: Rc<Ctrl> = Rc::new(Ctrl::Start {
+            args: Vec::new(),
+            bindings: Rc::new(RefCell::new(Vec::new())),
+        });
+
+        ctrl.push_scope();
 
         // TODO: add args to scope as Proj
-        let mut result: Option<Rc<RefCell<dyn Ctrl>>> = None;
+        let mut result: Option<Rc<Ctrl>> = None;
         while let Some(_) = self.current {
-            result = self.statement(&ctrl);
+            result = self.parse_statement(&ctrl);
         }
-        {
-            let mut ctrl_borrowed = ctrl.borrow_mut();
-            (&mut *ctrl_borrowed)
-                .as_any()
-                .downcast_mut::<ctrl::Start>()
-                .unwrap()
-                .pop_scope();
-        }
+
+        ctrl.pop_scope();
 
         if let Some(result) = result {
             result
@@ -75,14 +66,15 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn statement(&mut self, ctrl: &Rc<RefCell<dyn Ctrl>>) -> Option<Rc<RefCell<dyn Ctrl>>> {
+    fn parse_statement(&mut self, ctrl: &Rc<Ctrl>) -> Option<Rc<Ctrl>> {
+        #[allow(unused_assignments)]
         let mut title = String::new();
-        let result = match &self.current {
+        let result: Option<Rc<Ctrl>> = match &self.current {
             Some(Token::Return) => {
                 self.consume();
-                let expr = self.expression(ctrl);
-                title = format!("return {};", expr.borrow().to_string());
-                let result = Rc::new(RefCell::new(ctrl::Return::new(ctrl.clone(), expr)));
+                let expr = self.parse_expression(ctrl).peephole();
+                title = format!("return {};", expr);
+                let result = Ctrl::new_return(Rc::clone(&ctrl), expr);
                 self.expect(Token::Semicolon);
                 Some(result)
             }
@@ -95,29 +87,16 @@ impl<'a> Parser<'a> {
                 };
                 self.consume(); // name
                 self.expect(Token::Equal);
-                let expr = self.expression(ctrl);
-                title = format!("int {} = {};", name, expr.borrow().to_string());
+                let expr = self.parse_expression(ctrl).peephole();
+                title = format!("int {} = {};", name, expr);
                 self.expect(Token::Semicolon);
-                {
-                    let mut ctrl_borrowed = ctrl.borrow_mut();
-                    (&mut *ctrl_borrowed)
-                        .as_any()
-                        .downcast_mut::<ctrl::Start>()
-                        .unwrap()
-                        .declare(&name, expr);
-                }
+                ctrl.declare(&name, expr);
                 None
             }
             Some(Token::OpenBrace) => {
                 self.consume();
-                {
-                    let mut ctrl_borrowed = ctrl.borrow_mut();
-                    (&mut *ctrl_borrowed)
-                        .as_any()
-                        .downcast_mut::<ctrl::Start>()
-                        .unwrap()
-                        .push_scope();
-                }
+                ctrl.push_scope();
+                let mut result: Option<Rc<Ctrl>> = None;
                 loop {
                     match self.current {
                         Some(Token::CloseBrace) => {
@@ -128,74 +107,54 @@ impl<'a> Parser<'a> {
                             panic!("block statement: unexpected end of source");
                         }
                         _ => {
-                            let result = self.statement(&ctrl);
+                            result = self.parse_statement(&ctrl);
                         }
                     }
                 }
-                {
-                    let mut ctrl_borrowed = ctrl.borrow_mut();
-                    (&mut *ctrl_borrowed)
-                        .as_any()
-                        .downcast_mut::<ctrl::Start>()
-                        .unwrap()
-                        .pop_scope();
-                }
+                ctrl.pop_scope();
                 title = "{}".to_string();
-                None
+                result
             }
             Some(Token::Identifier(name)) => {
                 let name = name.clone();
                 self.consume(); // identifier
                 self.expect(Token::Equal);
-                let expr = self.expression(ctrl);
-                title = format!("{} = {};", name, expr.borrow().to_string());
+                let expr = self.parse_expression(ctrl).peephole();
+                title = format!("{} = {};", name, expr);
                 self.expect(Token::Semicolon);
-                {
-                    let mut ctrl_borrowed = ctrl.borrow_mut();
-                    (&mut *ctrl_borrowed)
-                        .as_any()
-                        .downcast_mut::<ctrl::Start>()
-                        .unwrap()
-                        .set(&name, expr);
-                }
+                ctrl.set(&name, expr);
                 None
             }
             Some(token) => panic!("statement: unexpected `{}`", token),
             None => panic!("statement: unexpected end of source"),
         };
         if let Some(result) = &result {
+            let result = Rc::clone(&result);
             visualize(&result, &title, Path::new(&format!("test{}.svg", self.pi))).unwrap();
         } else {
             visualize(&ctrl, &title, Path::new(&format!("test{}.svg", self.pi))).unwrap();
         }
         self.pi += 1;
         if let Some(result) = result {
-            Some(result as Rc<RefCell<dyn Ctrl>>)
+            Some(result)
         } else {
             None
         }
     }
 
-    fn expression(&mut self, ctrl: &Rc<RefCell<dyn Ctrl>>) -> Rc<RefCell<dyn Expr>> {
-        let expr = self.additive_expression(ctrl);
-        //let new_expr = expr.borrow().peephole_optimize();
-        //*expr.borrow_mut() = new_expr;
-        expr
-    }
-
-    fn additive_expression(&mut self, ctrl: &Rc<RefCell<dyn Ctrl>>) -> Rc<RefCell<dyn Expr>> {
-        let mut total = self.multiplicative_expression(ctrl);
+    fn parse_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
+        let mut total = self.parse_multiplicative_expression(ctrl).peephole();
         loop {
             match self.current {
                 Some(Token::Plus) => {
                     self.consume();
-                    let rhs = self.multiplicative_expression(ctrl);
-                    total = Rc::new(RefCell::new(expr::Add::new(total, rhs)))
+                    let rhs = self.parse_multiplicative_expression(ctrl).peephole();
+                    total = Rc::new(Expr::Add { lhs: total, rhs })
                 }
                 Some(Token::Minus) => {
                     self.consume();
-                    let rhs = self.multiplicative_expression(ctrl);
-                    total = Rc::new(RefCell::new(expr::Subtract::new(total, rhs)))
+                    let rhs = self.parse_multiplicative_expression(ctrl).peephole();
+                    total = Rc::new(Expr::Subtract { lhs: total, rhs })
                 }
                 None => {
                     panic!("additive expression: unexpected end of source");
@@ -206,19 +165,19 @@ impl<'a> Parser<'a> {
         total
     }
 
-    fn multiplicative_expression(&mut self, ctrl: &Rc<RefCell<dyn Ctrl>>) -> Rc<RefCell<dyn Expr>> {
-        let mut total = self.unary_expression(ctrl);
+    fn parse_multiplicative_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
+        let mut total = self.parse_unary_expression(ctrl).peephole();
         loop {
             match self.current {
                 Some(Token::Star) => {
                     self.consume();
-                    let rhs = self.unary_expression(ctrl);
-                    total = Rc::new(RefCell::new(expr::Multiply::new(total, rhs)))
+                    let rhs = self.parse_unary_expression(ctrl).peephole();
+                    total = Rc::new(Expr::Multiply { lhs: total, rhs })
                 }
                 Some(Token::Slash) => {
                     self.consume();
-                    let rhs = self.unary_expression(ctrl);
-                    total = Rc::new(RefCell::new(expr::Divide::new(total, rhs)))
+                    let rhs = self.parse_unary_expression(ctrl).peephole();
+                    total = Rc::new(Expr::Divide { lhs: total, rhs })
                 }
                 None => {
                     panic!("multiplicative expression: unexpected end of source");
@@ -229,20 +188,20 @@ impl<'a> Parser<'a> {
         total
     }
 
-    fn unary_expression(&mut self, ctrl: &Rc<RefCell<dyn Ctrl>>) -> Rc<RefCell<dyn Expr>> {
+    fn parse_unary_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
         if let Some(Token::Minus) = self.current {
             self.consume();
-            let expr = self.unary_expression(ctrl);
-            Rc::new(RefCell::new(expr::Negate::new(expr)))
+            let expr = self.parse_unary_expression(ctrl).peephole();
+            Rc::new(Expr::Negate { expr })
         } else {
-            self.primary_expression(ctrl)
+            self.parse_primary_expression(ctrl)
         }
     }
 
-    fn primary_expression(&mut self, ctrl: &Rc<RefCell<dyn Ctrl>>) -> Rc<RefCell<dyn Expr>> {
+    fn parse_primary_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
         if let Some(Token::OpenParen) = self.current {
             self.consume();
-            let expr = self.expression(ctrl);
+            let expr = self.parse_expression(ctrl).peephole();
             if let Some(Token::CloseParen) = self.current {
                 self.consume();
                 expr
@@ -254,19 +213,12 @@ impl<'a> Parser<'a> {
                 Some(Token::Integer(value)) => {
                     let value = *value;
                     self.consume();
-                    Rc::new(RefCell::new(expr::Constant::new(value)))
+                    Rc::new(Expr::Constant { value })
                 }
                 Some(Token::Identifier(name)) => {
                     let name = name.clone();
                     self.consume();
-                    if let Some(expr) = {
-                        let mut ctrl_borrowed = ctrl.borrow_mut();
-                        (&mut *ctrl_borrowed)
-                            .as_any()
-                            .downcast_ref::<ctrl::Start>()
-                            .unwrap()
-                            .get(&name)
-                    } {
+                    if let Some(expr) = ctrl.get(&name) {
                         expr
                     } else {
                         panic!("primary expression: undefined identifier `{}`", name);

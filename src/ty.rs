@@ -1,4 +1,4 @@
-use {crate::*, std::fmt::Display};
+use std::fmt::Display;
 
 #[derive(Clone, PartialEq, Eq)]
 pub enum Ty {
