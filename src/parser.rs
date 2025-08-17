@@ -115,6 +115,23 @@ impl<'a> Parser<'a> {
                 title = "{}".to_string();
                 result
             }
+            Some(Token::If) => {
+                self.consume(); // if
+                let expr = self.parse_expression(ctrl).peephole();
+                let then = Ctrl::new_then(Rc::clone(&ctrl));
+                self.parse_statement(&then);
+                let r#else = if let Some(Token::Else) = self.current {
+                    self.consume(); // else
+                    let r#else = Ctrl::new_else(Rc::clone(&ctrl));
+                    self.parse_statement(&r#else);
+                    Some(r#else)
+                } else {
+                    None
+                };
+                title = format!("if ({}) {{}}", expr);
+                let result = Ctrl::new_if(Rc::clone(&ctrl), expr, then, r#else);
+                Some(result)
+            }
             Some(Token::Identifier(name)) => {
                 let name = name.clone();
                 self.consume(); // identifier
@@ -143,6 +160,179 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
+        self.parse_logical_or_expression(ctrl)
+    }
+
+    fn parse_logical_or_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
+        let mut total = self.parse_logical_and_expression(ctrl).peephole();
+        loop {
+            match self.current {
+                Some(Token::BarBar) => {
+                    self.consume();
+                    let rhs = self.parse_logical_and_expression(ctrl).peephole();
+                    total = Rc::new(Expr::LogicalOr { lhs: total, rhs })
+                }
+                None => {
+                    panic!("logical or expression: unexpected end of source");
+                }
+                _ => break,
+            }
+        }
+        total
+    }
+
+    fn parse_logical_and_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
+        let mut total = self.parse_or_expression(ctrl).peephole();
+        loop {
+            match self.current {
+                Some(Token::AmpAmp) => {
+                    self.consume();
+                    let rhs = self.parse_or_expression(ctrl).peephole();
+                    total = Rc::new(Expr::LogicalAnd { lhs: total, rhs })
+                }
+                None => {
+                    panic!("logical and expression: unexpected end of source");
+                }
+                _ => break,
+            }
+        }
+        total
+    }
+
+    fn parse_or_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
+        let mut total = self.parse_xor_expression(ctrl).peephole();
+        loop {
+            match self.current {
+                Some(Token::Bar) => {
+                    self.consume();
+                    let rhs = self.parse_xor_expression(ctrl).peephole();
+                    total = Rc::new(Expr::Or { lhs: total, rhs })
+                }
+                None => {
+                    panic!("binary or expression: unexpected end of source");
+                }
+                _ => break,
+            }
+        }
+        total
+    }
+
+    fn parse_xor_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
+        let mut total = self.parse_and_expression(ctrl).peephole();
+        loop {
+            match self.current {
+                Some(Token::Caret) => {
+                    self.consume();
+                    let rhs = self.parse_and_expression(ctrl).peephole();
+                    total = Rc::new(Expr::Xor { lhs: total, rhs })
+                }
+                None => {
+                    panic!("xor expression: unexpected end of source");
+                }
+                _ => break,
+            }
+        }
+        total
+    }
+
+    fn parse_and_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
+        let mut total = self.parse_equality_expression(ctrl).peephole();
+        loop {
+            match self.current {
+                Some(Token::Amp) => {
+                    self.consume();
+                    let rhs = self.parse_equality_expression(ctrl).peephole();
+                    total = Rc::new(Expr::And { lhs: total, rhs })
+                }
+                None => {
+                    panic!("binary and expression: unexpected end of source");
+                }
+                _ => break,
+            }
+        }
+        total
+    }
+
+    fn parse_equality_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
+        let mut total = self.parse_relational_expression(ctrl).peephole();
+        loop {
+            match self.current {
+                Some(Token::EqualEqual) => {
+                    self.consume();
+                    let rhs = self.parse_relational_expression(ctrl).peephole();
+                    total = Rc::new(Expr::Equal { lhs: total, rhs })
+                }
+                Some(Token::ExclEqual) => {
+                    self.consume();
+                    let rhs = self.parse_relational_expression(ctrl).peephole();
+                    total = Rc::new(Expr::NotEqual { lhs: total, rhs })
+                }
+                None => {
+                    panic!("equality expression: unexpected end of source");
+                }
+                _ => break,
+            }
+        }
+        total
+    }
+
+    fn parse_relational_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
+        let mut total = self.parse_shift_expression(ctrl).peephole();
+        loop {
+            match self.current {
+                Some(Token::Less) => {
+                    self.consume();
+                    let rhs = self.parse_shift_expression(ctrl).peephole();
+                    total = Rc::new(Expr::LessThan { lhs: total, rhs })
+                }
+                Some(Token::Greater) => {
+                    self.consume();
+                    let rhs = self.parse_shift_expression(ctrl).peephole();
+                    total = Rc::new(Expr::GreaterThan { lhs: total, rhs })
+                }
+                Some(Token::LessEqual) => {
+                    self.consume();
+                    let rhs = self.parse_shift_expression(ctrl).peephole();
+                    total = Rc::new(Expr::LessThanOrEqual { lhs: total, rhs })
+                }
+                Some(Token::GreaterEqual) => {
+                    self.consume();
+                    let rhs = self.parse_shift_expression(ctrl).peephole();
+                    total = Rc::new(Expr::GreaterThanOrEqual { lhs: total, rhs })
+                }
+                None => {
+                    panic!("relational expression: unexpected end of source");
+                }
+                _ => break,
+            }
+        }
+        total
+    }
+
+    fn parse_shift_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
+        let mut total = self.parse_additive_expression(ctrl).peephole();
+        loop {
+            match self.current {
+                Some(Token::LessLess) => {
+                    self.consume();
+                    let rhs = self.parse_additive_expression(ctrl).peephole();
+                    total = Rc::new(Expr::ShiftLeft { lhs: total, rhs })
+                }
+                Some(Token::GreaterGreater) => {
+                    self.consume();
+                    let rhs = self.parse_additive_expression(ctrl).peephole();
+                    total = Rc::new(Expr::ShiftRight { lhs: total, rhs })
+                }
+                None => {
+                    panic!("shift expression: unexpected end of source");
+                }
+                _ => break,
+            }
+        }
+        total
+    }
+
+    fn parse_additive_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
         let mut total = self.parse_multiplicative_expression(ctrl).peephole();
         loop {
             match self.current {
@@ -179,6 +369,11 @@ impl<'a> Parser<'a> {
                     let rhs = self.parse_unary_expression(ctrl).peephole();
                     total = Rc::new(Expr::Divide { lhs: total, rhs })
                 }
+                Some(Token::Percent) => {
+                    self.consume();
+                    let rhs = self.parse_unary_expression(ctrl).peephole();
+                    total = Rc::new(Expr::Modulo { lhs: total, rhs })
+                }
                 None => {
                     panic!("multiplicative expression: unexpected end of source");
                 }
@@ -189,12 +384,23 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_unary_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
-        if let Some(Token::Minus) = self.current {
-            self.consume();
-            let expr = self.parse_unary_expression(ctrl).peephole();
-            Rc::new(Expr::Negate { expr })
-        } else {
-            self.parse_primary_expression(ctrl)
+        match self.current {
+            Some(Token::Minus) => {
+                self.consume();
+                let expr = self.parse_unary_expression(ctrl).peephole();
+                Rc::new(Expr::Negate { expr })
+            }
+            Some(Token::Excl) => {
+                self.consume();
+                let expr = self.parse_unary_expression(ctrl).peephole();
+                Rc::new(Expr::LogicalNot { expr })
+            }
+            Some(Token::Tilde) => {
+                self.consume();
+                let expr = self.parse_unary_expression(ctrl).peephole();
+                Rc::new(Expr::Not { expr })
+            }
+            _ => self.parse_primary_expression(ctrl),
         }
     }
 

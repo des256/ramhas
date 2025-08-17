@@ -82,12 +82,14 @@ impl<'a> Iterator for Tokenizer<'a> {
                         "fn" => return Some(Token::Fn),
                         "return" => return Some(Token::Return),
                         "int" => return Some(Token::Int),
+                        "if" => return Some(Token::If),
+                        "else" => return Some(Token::Else),
                         _ => return Some(Token::Identifier(identifier)),
                     }
                 }
 
                 // punctuation
-                '(' | ')' | '{' | '}' | ';' | '+' | '-' | '*' | '/' | '=' => {
+                '(' | ')' | '{' | '}' | ';' | '+' | '-' | '*' | '/' | '=' | '!' | '<' | '>' => {
                     self.consume();
                     self.column += 1;
                     match c {
@@ -96,11 +98,90 @@ impl<'a> Iterator for Tokenizer<'a> {
                         '{' => return Some(Token::OpenBrace),
                         '}' => return Some(Token::CloseBrace),
                         ';' => return Some(Token::Semicolon),
-                        '+' => return Some(Token::Plus),
-                        '-' => return Some(Token::Minus),
                         '*' => return Some(Token::Star),
                         '/' => return Some(Token::Slash),
-                        '=' => return Some(Token::Equal),
+                        '|' => match self.peeked {
+                            Some('|') => {
+                                self.consume();
+                                self.column += 1;
+                                return Some(Token::BarBar);
+                            }
+                            _ => return Some(Token::Bar),
+                        },
+                        '&' => match self.peeked {
+                            Some('&') => {
+                                self.consume();
+                                self.column += 1;
+                                return Some(Token::AmpAmp);
+                            }
+                            _ => return Some(Token::Amp),
+                        },
+                        '^' => return Some(Token::Caret),
+                        '~' => return Some(Token::Tilde),
+                        '%' => return Some(Token::Percent),
+                        '+' => match self.peeked {
+                            Some('+') => {
+                                self.consume();
+                                self.column += 1;
+                                return Some(Token::PlusPlus);
+                            }
+                            _ => return Some(Token::Plus),
+                        },
+                        '-' => match self.peeked {
+                            Some('>') => {
+                                self.consume();
+                                self.column += 1;
+                                return Some(Token::MinusGreater);
+                            }
+                            Some('-') => {
+                                self.consume();
+                                self.column += 1;
+                                return Some(Token::MinusMinus);
+                            }
+                            _ => return Some(Token::Minus),
+                        },
+                        '=' => match self.peeked {
+                            Some('=') => {
+                                self.consume();
+                                self.column += 1;
+                                return Some(Token::EqualEqual);
+                            }
+                            _ => return Some(Token::Equal),
+                        },
+                        '!' => match self.peeked {
+                            Some('=') => {
+                                self.consume();
+                                self.column += 1;
+                                return Some(Token::ExclEqual);
+                            }
+                            _ => return Some(Token::Excl),
+                        },
+                        '<' => match self.peeked {
+                            Some('=') => {
+                                self.consume();
+                                self.column += 1;
+                                return Some(Token::LessEqual);
+                            }
+                            Some('<') => {
+                                self.consume();
+                                self.column += 1;
+                                return Some(Token::LessLess);
+                            }
+                            _ => return Some(Token::Less),
+                        },
+                        '>' => match self.peeked {
+                            Some('=') => {
+                                self.consume();
+                                self.column += 1;
+                                return Some(Token::GreaterEqual);
+                            }
+                            Some('>') => {
+                                self.consume();
+                                self.column += 1;
+                                return Some(Token::GreaterGreater);
+                            }
+                            _ => return Some(Token::Greater),
+                        },
                         _ => {}
                     }
                 }

@@ -19,18 +19,20 @@ pub enum Ctrl {
     If {
         ctrl: Rc<Ctrl>,
         expr: Rc<Expr>,
-        ifthen: Rc<Ctrl>,
-        ifelse: Option<Rc<Ctrl>>,
+        then: Rc<Ctrl>,
+        r#else: Option<Rc<Ctrl>>,
     },
-    IfThen {
+    Then {
         ctrl: Rc<Ctrl>,
+        bindings: Rc<RefCell<Vec<HashMap<String, Rc<Expr>>>>>,
     },
-    IfElse {
+    Else {
         ctrl: Rc<Ctrl>,
+        bindings: Rc<RefCell<Vec<HashMap<String, Rc<Expr>>>>>,
     },
-    Region {
-        ctrl: Rc<Ctrl>,
-    }
+    Merge {
+        ctrls: Vec<Rc<Ctrl>>,
+    },
 }
 
 impl Ctrl {
@@ -47,6 +49,34 @@ impl Ctrl {
 
     pub fn new_stop(ctrls: Vec<Rc<Ctrl>>) -> Rc<Ctrl> {
         Rc::new(Ctrl::Stop { ctrls })
+    }
+
+    pub fn new_if(
+        ctrl: Rc<Ctrl>,
+        expr: Rc<Expr>,
+        then: Rc<Ctrl>,
+        r#else: Option<Rc<Ctrl>>,
+    ) -> Rc<Ctrl> {
+        Rc::new(Ctrl::If {
+            ctrl,
+            expr,
+            then,
+            r#else,
+        })
+    }
+
+    pub fn new_then(ctrl: Rc<Ctrl>) -> Rc<Ctrl> {
+        let bindings = ctrl.clone_bindings();
+        Rc::new(Ctrl::Then { ctrl, bindings })
+    }
+
+    pub fn new_else(ctrl: Rc<Ctrl>) -> Rc<Ctrl> {
+        let bindings = ctrl.clone_bindings();
+        Rc::new(Ctrl::Else { ctrl, bindings })
+    }
+
+    pub fn new_merge(ctrls: Vec<Rc<Ctrl>>) -> Rc<Ctrl> {
+        Rc::new(Ctrl::Merge { ctrls })
     }
 
     pub fn visualize(
@@ -82,17 +112,48 @@ impl Ctrl {
                     visualizer.add_n2n(&gen_id, &ctrl_id, true);
                 }
             }
-            Ctrl::If { ctrl,expr,ifthen,ifelse } => {
-
+            Ctrl::If {
+                ctrl,
+                expr,
+                then,
+                r#else,
+            } => {
+                let ctrl_id = visualizer.add_ctrl(&ctrl);
+                let expr_id = visualizer.add_expr(&expr);
+                let then_id = visualizer.add_ctrl(&then);
+                let r#else_id = if let Some(r#else) = r#else {
+                    Some(visualizer.add_ctrl(&r#else))
+                } else {
+                    None
+                };
+                add_attr(attributes, "label", "\"If\"");
+                visualizer.add_n2n(&gen_id, &ctrl_id, false);
+                visualizer.add_n2n(&gen_id, &expr_id, false);
+                visualizer.add_n2n(&gen_id, &then_id, true);
+                if let Some(r#else_id) = r#else_id {
+                    visualizer.add_n2n(&gen_id, &r#else_id, true);
+                }
             }
-            Ctrl::IfThen { ctrl } => {
-
+            Ctrl::Then { ctrl, bindings } => {
+                let ctrl_id = visualizer.add_ctrl(&ctrl);
+                let scopes_id = visualizer.add_bindings(&gen_id, &bindings);
+                add_attr(attributes, "label", "\"Then\"");
+                visualizer.add_n2n(&gen_id, &ctrl_id, false);
+                visualizer.add_n2n(&gen_id, &scopes_id, false);
             }
-            Ctrl::IfElse { ctrl } => {
-
+            Ctrl::Else { ctrl, bindings } => {
+                let ctrl_id = visualizer.add_ctrl(&ctrl);
+                let scopes_id = visualizer.add_bindings(&gen_id, &bindings);
+                add_attr(attributes, "label", "\"Else\"");
+                visualizer.add_n2n(&gen_id, &ctrl_id, false);
+                visualizer.add_n2n(&gen_id, &scopes_id, false);
+                visualizer.add_n2n(&gen_id, &ctrl_id, true);
             }
-            ctrl::Region { ctrl } => {
-
+            Ctrl::Merge { ctrls } => {
+                for ctrl in ctrls.iter() {
+                    let ctrl_id = visualizer.add_ctrl(ctrl);
+                    visualizer.add_n2n(&gen_id, &ctrl_id, true);
+                }
             }
         }
     }
@@ -144,8 +205,24 @@ impl Ctrl {
                 }
                 None
             }
+            Ctrl::Then { bindings, .. } => {
+                for bindings in bindings.borrow().iter().rev() {
+                    if let Some(expr) = bindings.get(name) {
+                        return Some(Rc::clone(&expr));
+                    }
+                }
+                None
+            }
+            Ctrl::Else { bindings, .. } => {
+                for bindings in bindings.borrow().iter().rev() {
+                    if let Some(expr) = bindings.get(name) {
+                        return Some(Rc::clone(&expr));
+                    }
+                }
+                None
+            }
             _ => {
-                panic!("cannot call get on non-start control");
+                panic!("cannot call get on {}", self);
             }
         }
     }
@@ -161,9 +238,34 @@ impl Ctrl {
                 }
                 panic!("variable `{}` not found", name);
             }
-            _ => {
-                panic!("cannot call set on non-start control");
+            Ctrl::Then { bindings, .. } => {
+                for bindings in bindings.borrow_mut().iter_mut().rev() {
+                    if let Some(binding) = bindings.get_mut(name) {
+                        *binding = expr;
+                        return;
+                    }
+                }
             }
+            Ctrl::Else { bindings, .. } => {
+                for bindings in bindings.borrow_mut().iter_mut().rev() {
+                    if let Some(binding) = bindings.get_mut(name) {
+                        *binding = expr;
+                        return;
+                    }
+                }
+            }
+            _ => {
+                panic!("cannot call set on {}", self);
+            }
+        }
+    }
+
+    fn clone_bindings(&self) -> Rc<RefCell<Vec<HashMap<String, Rc<Expr>>>>> {
+        match self {
+            Ctrl::Start { bindings, .. } => Rc::clone(bindings),
+            Ctrl::Then { bindings, .. } => Rc::clone(bindings),
+            Ctrl::Else { bindings, .. } => Rc::clone(bindings),
+            _ => panic!("cannot copy bindings from {}", self),
         }
     }
 }
@@ -174,10 +276,24 @@ impl Display for Ctrl {
             Ctrl::Start { .. } => write!(f, "Start"),
             Ctrl::Return { expr, .. } => write!(f, "Return({})", expr),
             Ctrl::Stop { ctrls } => write!(f, "Stop({})", ctrls.len()),
-            Ctrl::If { expr,..} => write!(f,"If({})",expr),
-            Ctrl::IfThen { .. } => write!(f,"IfThen"),
-            Ctrl::IfElse { .. } => write!(f,"IfElse"),
-            Ctrl::Region { .. } => write!(f,"Region"),
+            Ctrl::If {
+                expr, then, r#else, ..
+            } => {
+                write!(
+                    f,
+                    "If({},{}{})",
+                    expr,
+                    then,
+                    if let Some(r#else) = r#else {
+                        format!(",{}", r#else)
+                    } else {
+                        "".to_string()
+                    }
+                )
+            }
+            Ctrl::Then { .. } => write!(f, "Then"),
+            Ctrl::Else { .. } => write!(f, "Else"),
+            Ctrl::Merge { ctrls } => write!(f, "Merge({})", ctrls.len()),
         }
     }
 }
