@@ -3,5 +3,5 @@ use ramhas::*;
 fn main() {
     let mut parser =
         Parser::new("int a = 1; int b = 2; int c = 0; { int b = 5; c = a + b; } { int e = 6; c = a + e; } return c;");
-    parser.program();
+    parser.parse_program();
 }

@@ -16,6 +16,21 @@ pub enum Ctrl {
     Stop {
         ctrls: Vec<Rc<Ctrl>>,
     },
+    If {
+        ctrl: Rc<Ctrl>,
+        expr: Rc<Expr>,
+        ifthen: Rc<Ctrl>,
+        ifelse: Option<Rc<Ctrl>>,
+    },
+    IfThen {
+        ctrl: Rc<Ctrl>,
+    },
+    IfElse {
+        ctrl: Rc<Ctrl>,
+    },
+    Region {
+        ctrl: Rc<Ctrl>,
+    }
 }
 
 impl Ctrl {
@@ -66,6 +81,18 @@ impl Ctrl {
                     let ctrl_id = visualizer.add_ctrl(ctrl);
                     visualizer.add_n2n(&gen_id, &ctrl_id, true);
                 }
+            }
+            Ctrl::If { ctrl,expr,ifthen,ifelse } => {
+
+            }
+            Ctrl::IfThen { ctrl } => {
+
+            }
+            Ctrl::IfElse { ctrl } => {
+
+            }
+            ctrl::Region { ctrl } => {
+
             }
         }
     }
@@ -147,6 +174,10 @@ impl Display for Ctrl {
             Ctrl::Start { .. } => write!(f, "Start"),
             Ctrl::Return { expr, .. } => write!(f, "Return({})", expr),
             Ctrl::Stop { ctrls } => write!(f, "Stop({})", ctrls.len()),
+            Ctrl::If { expr,..} => write!(f,"If({})",expr),
+            Ctrl::IfThen { .. } => write!(f,"IfThen"),
+            Ctrl::IfElse { .. } => write!(f,"IfElse"),
+            Ctrl::Region { .. } => write!(f,"Region"),
         }
     }
 }
