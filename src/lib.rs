@@ -10,9 +10,6 @@ pub use tokenizer::*;
 mod parser;
 pub use parser::*;
 
-mod ty;
-pub use ty::*;
-
 mod value;
 pub use value::*;
 

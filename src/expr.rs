@@ -4,162 +4,191 @@ use {
     std::{fmt::Display, rc::Rc},
 };
 
+pub enum BinaryOp {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Modulo,
+    And,
+    Or,
+    Xor,
+    LogicalAnd,
+    LogicalOr,
+    ShiftLeft,
+    ShiftRight,
+    Equal,
+    NotEqual,
+    LessThan,
+    GreaterThan,
+    LessThanOrEqual,
+    GreaterThanOrEqual,
+}
+
+impl Display for BinaryOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BinaryOp::Add => write!(f, "+"),
+            BinaryOp::Subtract => write!(f, "-"),
+            BinaryOp::Multiply => write!(f, "*"),
+            BinaryOp::Divide => write!(f, "/"),
+            BinaryOp::Modulo => write!(f, "%"),
+            BinaryOp::And => write!(f, "&"),
+            BinaryOp::Or => write!(f, "|"),
+            BinaryOp::Xor => write!(f, "^"),
+            BinaryOp::LogicalAnd => write!(f, "&&"),
+            BinaryOp::LogicalOr => write!(f, "||"),
+            BinaryOp::ShiftLeft => write!(f, "<<"),
+            BinaryOp::ShiftRight => write!(f, ">>"),
+            BinaryOp::Equal => write!(f, "=="),
+            BinaryOp::NotEqual => write!(f, "!="),
+            BinaryOp::LessThan => write!(f, "<"),
+            BinaryOp::GreaterThan => write!(f, ">"),
+            BinaryOp::LessThanOrEqual => write!(f, "<="),
+            BinaryOp::GreaterThanOrEqual => write!(f, ">="),
+        }
+    }
+}
+
+pub enum UnaryOp {
+    Negate,
+    Not,
+    LogicalNot,
+}
+
+impl Display for UnaryOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UnaryOp::Negate => write!(f, "-"),
+            UnaryOp::Not => write!(f, "~"),
+            UnaryOp::LogicalNot => write!(f, "!"),
+        }
+    }
+}
+
 pub enum Expr {
     Phi {
         ctrl: Rc<Ctrl>,
         exprs: Vec<Rc<Expr>>,
     },
     Constant {
-        value: i64,
+        value: Value,
     },
-    Add {
+    Binary {
         lhs: Rc<Expr>,
+        op: BinaryOp,
         rhs: Rc<Expr>,
     },
-    Subtract {
-        lhs: Rc<Expr>,
-        rhs: Rc<Expr>,
-    },
-    Multiply {
-        lhs: Rc<Expr>,
-        rhs: Rc<Expr>,
-    },
-    Divide {
-        lhs: Rc<Expr>,
-        rhs: Rc<Expr>,
-    },
-    Negate {
+    Unary {
+        op: UnaryOp,
         expr: Rc<Expr>,
-    },
-    Modulo {
-        lhs: Rc<Expr>,
-        rhs: Rc<Expr>,
-    },
-    Not {
-        expr: Rc<Expr>,
-    },
-    And {
-        lhs: Rc<Expr>,
-        rhs: Rc<Expr>,
-    },
-    Or {
-        lhs: Rc<Expr>,
-        rhs: Rc<Expr>,
-    },
-    Xor {
-        lhs: Rc<Expr>,
-        rhs: Rc<Expr>,
-    },
-    LogicalAnd {
-        lhs: Rc<Expr>,
-        rhs: Rc<Expr>,
-    },
-    LogicalOr {
-        lhs: Rc<Expr>,
-        rhs: Rc<Expr>,
-    },
-    LogicalNot {
-        expr: Rc<Expr>,
-    },
-    ShiftLeft {
-        lhs: Rc<Expr>,
-        rhs: Rc<Expr>,
-    },
-    ShiftRight {
-        lhs: Rc<Expr>,
-        rhs: Rc<Expr>,
-    },
-    Equal {
-        lhs: Rc<Expr>,
-        rhs: Rc<Expr>,
-    },
-    NotEqual {
-        lhs: Rc<Expr>,
-        rhs: Rc<Expr>,
-    },
-    LessThan {
-        lhs: Rc<Expr>,
-        rhs: Rc<Expr>,
-    },
-    LessThanOrEqual {
-        lhs: Rc<Expr>,
-        rhs: Rc<Expr>,
-    },
-    GreaterThan {
-        lhs: Rc<Expr>,
-        rhs: Rc<Expr>,
-    },
-    GreaterThanOrEqual {
-        lhs: Rc<Expr>,
-        rhs: Rc<Expr>,
     },
 }
 
 impl Expr {
     pub fn peephole(self: Rc<Self>) -> Rc<Expr> {
-        match self.as_ref() {
-            Expr::Add { lhs, rhs } => {
-                let lhs = Rc::clone(&lhs).peephole();
-                let rhs = Rc::clone(&rhs).peephole();
-                match (lhs.as_ref(), rhs.as_ref()) {
-                    (Expr::Constant { value: lhs, .. }, Expr::Constant { value: rhs, .. }) => {
-                        Rc::new(Expr::Constant { value: lhs + rhs })
-                    }
-                    // TODO: 0 + expr -> expr
-                    // TODO: expr + 0 -> expr
-                    // TODO: const + expr -> expr + const
-                    // TODO: const1 + (expr + const2) -> expr + (const1 + const2)
-                    // TODO: (expr1 + const) + expr2 -> (expr1 + expr2) + const
-                    // TODO: expr + expr -> expr * 2
-                    _ => self,
-                }
-            }
-            Expr::Subtract { lhs, rhs } => {
-                let lhs = Rc::clone(&lhs).peephole();
-                let rhs = Rc::clone(&rhs).peephole();
-                match (lhs.as_ref(), rhs.as_ref()) {
-                    (Expr::Constant { value: lhs, .. }, Expr::Constant { value: rhs, .. }) => {
-                        Rc::new(Expr::Constant { value: lhs - rhs })
-                    }
-                    // TODO: 0 - expr -> -expr
-                    // TODO: expr - 0 -> expr
-                    // TODO: expr - expr -> 0
-                    _ => self,
-                }
-            }
-            Expr::Multiply { lhs, rhs } => {
-                let lhs = Rc::clone(&lhs).peephole();
-                let rhs = Rc::clone(&rhs).peephole();
-                match (lhs.as_ref(), rhs.as_ref()) {
-                    (Expr::Constant { value: lhs, .. }, Expr::Constant { value: rhs, .. }) => {
-                        Rc::new(Expr::Constant { value: lhs * rhs })
-                    }
-                    // TODO: 1 * expr -> expr
-                    // TODO: expr * 1 -> expr
-                    // TODO: const * expr -> expr * const
-                    _ => self,
-                }
-            }
-            Expr::Divide { lhs, rhs } => {
-                let lhs = Rc::clone(&lhs).peephole();
-                let rhs = Rc::clone(&rhs).peephole();
-                match (lhs.as_ref(), rhs.as_ref()) {
-                    (Expr::Constant { value: lhs, .. }, Expr::Constant { value: rhs, .. }) => {
-                        Rc::new(Expr::Constant { value: lhs / rhs })
-                    }
-                    // TODO: expr / 1 -> expr
-                    _ => self,
-                }
-            }
-            Expr::Negate { expr } => {
-                let expr = Rc::clone(&expr).peephole();
-                match expr.as_ref() {
-                    Expr::Constant { value } => Rc::new(Expr::Constant { value: -value }),
-                    _ => self,
-                }
-            }
+        let value = self.compute();
+        match value {
+            Value::Int(IntValue::Constant(_)) => Rc::new(Expr::Constant { value }),
+            Value::Bool(BoolValue::Constant(_)) => Rc::new(Expr::Constant { value }),
             _ => self,
         }
+    }
+
+    pub fn compute(&self) -> Value {
+        match self {
+            Expr::Phi { exprs, .. } => {
+                let mut value = Value::Any;
+                for expr in exprs.iter() {
+                    value = value.join(&expr.compute());
+                }
+                value
+            }
+            Expr::Constant { value } => value.clone(),
+            Expr::Binary { lhs, op, rhs } => {
+                let lhs = lhs.compute();
+                let rhs = rhs.compute();
+                if let (
+                    &Value::Int(IntValue::Constant(lhs)),
+                    &Value::Int(IntValue::Constant(rhs)),
+                ) = (&lhs, &rhs)
+                {
+                    match op {
+                        BinaryOp::Add => Value::Int(IntValue::Constant(lhs + rhs)),
+                        BinaryOp::Subtract => Value::Int(IntValue::Constant(lhs - rhs)),
+                        BinaryOp::Multiply => Value::Int(IntValue::Constant(lhs * rhs)),
+                        BinaryOp::Divide => Value::Int(IntValue::Constant(lhs / rhs)),
+                        BinaryOp::Modulo => Value::Int(IntValue::Constant(lhs % rhs)),
+                        BinaryOp::And => Value::Int(IntValue::Constant(lhs & rhs)),
+                        BinaryOp::Or => Value::Int(IntValue::Constant(lhs | rhs)),
+                        BinaryOp::Xor => Value::Int(IntValue::Constant(lhs ^ rhs)),
+                        BinaryOp::ShiftLeft => Value::Int(IntValue::Constant(lhs << rhs)),
+                        BinaryOp::ShiftRight => Value::Int(IntValue::Constant(lhs >> rhs)),
+                        BinaryOp::Equal => Value::Bool(BoolValue::Constant(lhs == rhs)),
+                        BinaryOp::NotEqual => Value::Bool(BoolValue::Constant(lhs != rhs)),
+                        BinaryOp::LessThan => Value::Bool(BoolValue::Constant(lhs < rhs)),
+                        BinaryOp::GreaterThan => Value::Bool(BoolValue::Constant(lhs > rhs)),
+                        BinaryOp::LessThanOrEqual => Value::Bool(BoolValue::Constant(lhs <= rhs)),
+                        BinaryOp::GreaterThanOrEqual => {
+                            Value::Bool(BoolValue::Constant(lhs >= rhs))
+                        }
+                        _ => panic!("binary operator '{}' invalid for integers", op),
+                    }
+                } else if let (
+                    &Value::Bool(BoolValue::Constant(lhs)),
+                    &Value::Bool(BoolValue::Constant(rhs)),
+                ) = (&lhs, &rhs)
+                {
+                    match op {
+                        BinaryOp::LogicalAnd => Value::Bool(BoolValue::Constant(lhs && rhs)),
+                        BinaryOp::LogicalOr => Value::Bool(BoolValue::Constant(lhs || rhs)),
+                        _ => panic!("binary operator '{}' invalid for booleans", op),
+                    }
+                } else {
+                    lhs.join(&rhs)
+                }
+            }
+            Expr::Unary { op, expr } => {
+                let expr = expr.compute();
+                if let Value::Int(IntValue::Constant(expr)) = expr {
+                    match op {
+                        UnaryOp::Negate => Value::Int(IntValue::Constant(-expr)),
+                        UnaryOp::Not => Value::Int(IntValue::Constant(!expr)),
+                        _ => panic!("unary operator '{}' invalid for integers", op),
+                    }
+                } else if let Value::Bool(BoolValue::Constant(expr)) = expr {
+                    match op {
+                        UnaryOp::LogicalNot => Value::Bool(BoolValue::Constant(!expr)),
+                        _ => panic!("unary operator '{}' invalid for booleans", op),
+                    }
+                } else {
+                    expr
+                }
+            }
+        }
+    }
+
+    pub fn idealize(self: Rc<Self>) -> Rc<Self> {
+        // TODO: 0 + expr -> expr
+        // TODO: expr + 0 -> expr
+        // TODO: const + expr -> expr + const
+        // TODO: const1 + (expr + const2) -> expr + (const1 + const2)
+        // TODO: (expr1 + const) + expr2 -> (expr1 + expr2) + const
+        // TODO: expr + expr -> expr * 2
+        // TODO: 0 - expr -> -expr
+        // TODO: expr - 0 -> expr
+        // TODO: expr - expr -> 0
+        // TODO: 1 * expr -> expr
+        // TODO: expr * 1 -> expr
+        // TODO: const * expr -> expr * const
+        // TODO: expr / 1 -> expr
+        // TODO: expr == expr -> true
+        // TODO: expr != expr -> false
+        // TODO: expr < expr -> false
+        // TODO: expr > expr -> false
+        // TODO: expr <= expr -> true
+        // TODO: expr >= expr -> true
+        self
     }
 
     pub fn visualize(
@@ -181,146 +210,17 @@ impl Expr {
             Expr::Constant { value } => {
                 add_attr(attributes, "label", &format!("{}", value));
             }
-            Expr::Add { lhs, rhs } => {
-                add_attr(attributes, "label", "\"+\"");
+            Expr::Binary { lhs, op, rhs } => {
+                add_attr(attributes, "label", &format!("\"{}\"", op));
                 let lhs_id = visualizer.add_expr(lhs);
                 let rhs_id = visualizer.add_expr(rhs);
                 visualizer.add_n2n(&gen_id, &lhs_id, false);
                 visualizer.add_n2n(&gen_id, &rhs_id, false);
             }
-            Expr::Subtract { lhs, rhs } => {
-                add_attr(attributes, "label", "\"-\"");
-                let lhs_id = visualizer.add_expr(lhs);
-                let rhs_id = visualizer.add_expr(rhs);
-                visualizer.add_n2n(&gen_id, &lhs_id, false);
-                visualizer.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::Multiply { lhs, rhs } => {
-                add_attr(attributes, "label", "\"*\"");
-                let lhs_id = visualizer.add_expr(lhs);
-                let rhs_id = visualizer.add_expr(rhs);
-                visualizer.add_n2n(&gen_id, &lhs_id, false);
-                visualizer.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::Divide { lhs, rhs } => {
-                add_attr(attributes, "label", "\"/\"");
-                let lhs_id = visualizer.add_expr(lhs);
-                let rhs_id = visualizer.add_expr(rhs);
-                visualizer.add_n2n(&gen_id, &lhs_id, false);
-                visualizer.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::Modulo { lhs, rhs } => {
-                add_attr(attributes, "label", "\"%\"");
-                let lhs_id = visualizer.add_expr(lhs);
-                let rhs_id = visualizer.add_expr(rhs);
-                visualizer.add_n2n(&gen_id, &lhs_id, false);
-                visualizer.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::Negate { expr } => {
-                add_attr(attributes, "label", "\"-\"");
+            Expr::Unary { op, expr } => {
+                add_attr(attributes, "label", &format!("\"{}\"", op));
                 let expr_id = visualizer.add_expr(expr);
                 visualizer.add_n2n(&gen_id, &expr_id, false);
-            }
-            Expr::Not { expr } => {
-                add_attr(attributes, "label", "\"~\"");
-                let expr_id = visualizer.add_expr(expr);
-                visualizer.add_n2n(&gen_id, &expr_id, false);
-            }
-            Expr::And { lhs, rhs } => {
-                add_attr(attributes, "label", "\"&\"");
-                let lhs_id = visualizer.add_expr(lhs);
-                let rhs_id = visualizer.add_expr(rhs);
-                visualizer.add_n2n(&gen_id, &lhs_id, false);
-                visualizer.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::Or { lhs, rhs } => {
-                add_attr(attributes, "label", "\"|\"");
-                let lhs_id = visualizer.add_expr(lhs);
-                let rhs_id = visualizer.add_expr(rhs);
-                visualizer.add_n2n(&gen_id, &lhs_id, false);
-                visualizer.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::Xor { lhs, rhs } => {
-                add_attr(attributes, "label", "\"^\"");
-                let lhs_id = visualizer.add_expr(lhs);
-                let rhs_id = visualizer.add_expr(rhs);
-                visualizer.add_n2n(&gen_id, &lhs_id, false);
-                visualizer.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::LogicalAnd { lhs, rhs } => {
-                add_attr(attributes, "label", "\"&&\"");
-                let lhs_id = visualizer.add_expr(lhs);
-                let rhs_id = visualizer.add_expr(rhs);
-                visualizer.add_n2n(&gen_id, &lhs_id, false);
-                visualizer.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::LogicalOr { lhs, rhs } => {
-                add_attr(attributes, "label", "\"||\"");
-                let lhs_id = visualizer.add_expr(lhs);
-                let rhs_id = visualizer.add_expr(rhs);
-                visualizer.add_n2n(&gen_id, &lhs_id, false);
-                visualizer.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::LogicalNot { expr } => {
-                add_attr(attributes, "label", "\"-\"");
-                let expr_id = visualizer.add_expr(expr);
-                visualizer.add_n2n(&gen_id, &expr_id, false);
-            }
-            Expr::ShiftLeft { lhs, rhs } => {
-                add_attr(attributes, "label", "\"<<\"");
-                let lhs_id = visualizer.add_expr(lhs);
-                let rhs_id = visualizer.add_expr(rhs);
-                visualizer.add_n2n(&gen_id, &lhs_id, false);
-                visualizer.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::ShiftRight { lhs, rhs } => {
-                add_attr(attributes, "label", "\">>\"");
-                let lhs_id = visualizer.add_expr(lhs);
-                let rhs_id = visualizer.add_expr(rhs);
-                visualizer.add_n2n(&gen_id, &lhs_id, false);
-                visualizer.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::Equal { lhs, rhs } => {
-                add_attr(attributes, "label", "\"==\"");
-                let lhs_id = visualizer.add_expr(lhs);
-                let rhs_id = visualizer.add_expr(rhs);
-                visualizer.add_n2n(&gen_id, &lhs_id, false);
-                visualizer.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::NotEqual { lhs, rhs } => {
-                add_attr(attributes, "label", "\"!=\"");
-                let lhs_id = visualizer.add_expr(lhs);
-                let rhs_id = visualizer.add_expr(rhs);
-                visualizer.add_n2n(&gen_id, &lhs_id, false);
-                visualizer.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::LessThan { lhs, rhs } => {
-                add_attr(attributes, "label", "\"<\"");
-                let lhs_id = visualizer.add_expr(lhs);
-                let rhs_id = visualizer.add_expr(rhs);
-                visualizer.add_n2n(&gen_id, &lhs_id, false);
-                visualizer.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::LessThanOrEqual { lhs, rhs } => {
-                add_attr(attributes, "label", "\"<=\"");
-                let lhs_id = visualizer.add_expr(lhs);
-                let rhs_id = visualizer.add_expr(rhs);
-                visualizer.add_n2n(&gen_id, &lhs_id, false);
-                visualizer.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::GreaterThan { lhs, rhs } => {
-                add_attr(attributes, "label", "\">\"");
-                let lhs_id = visualizer.add_expr(lhs);
-                let rhs_id = visualizer.add_expr(rhs);
-                visualizer.add_n2n(&gen_id, &lhs_id, false);
-                visualizer.add_n2n(&gen_id, &rhs_id, false);
-            }
-            Expr::GreaterThanOrEqual { lhs, rhs } => {
-                add_attr(attributes, "label", "\">=\"");
-                let lhs_id = visualizer.add_expr(lhs);
-                let rhs_id = visualizer.add_expr(rhs);
-                visualizer.add_n2n(&gen_id, &lhs_id, false);
-                visualizer.add_n2n(&gen_id, &rhs_id, false);
             }
         }
     }
@@ -331,27 +231,8 @@ impl Display for Expr {
         match self {
             Expr::Phi { exprs, .. } => write!(f, "Phi({})", exprs.len()),
             Expr::Constant { value } => write!(f, "{}", value),
-            Expr::Add { lhs, rhs } => write!(f, "({} + {})", lhs, rhs),
-            Expr::Subtract { lhs, rhs } => write!(f, "({} - {})", lhs, rhs),
-            Expr::Multiply { lhs, rhs } => write!(f, "({} * {})", lhs, rhs),
-            Expr::Divide { lhs, rhs } => write!(f, "({} / {})", lhs, rhs),
-            Expr::Negate { expr } => write!(f, "(-{})", expr),
-            Expr::Modulo { lhs, rhs } => write!(f, "({} % {})", lhs, rhs),
-            Expr::Not { expr } => write!(f, "(!{})", expr),
-            Expr::And { lhs, rhs } => write!(f, "({} & {})", lhs, rhs),
-            Expr::Or { lhs, rhs } => write!(f, "({} | {})", lhs, rhs),
-            Expr::Xor { lhs, rhs } => write!(f, "({} ^ {})", lhs, rhs),
-            Expr::LogicalAnd { lhs, rhs } => write!(f, "({} && {})", lhs, rhs),
-            Expr::LogicalOr { lhs, rhs } => write!(f, "({} || {})", lhs, rhs),
-            Expr::LogicalNot { expr } => write!(f, "(!{})", expr),
-            Expr::ShiftLeft { lhs, rhs } => write!(f, "({} << {})", lhs, rhs),
-            Expr::ShiftRight { lhs, rhs } => write!(f, "({} >> {})", lhs, rhs),
-            Expr::Equal { lhs, rhs } => write!(f, "({} == {})", lhs, rhs),
-            Expr::NotEqual { lhs, rhs } => write!(f, "({} != {})", lhs, rhs),
-            Expr::LessThan { lhs, rhs } => write!(f, "({} < {})", lhs, rhs),
-            Expr::LessThanOrEqual { lhs, rhs } => write!(f, "({} <= {})", lhs, rhs),
-            Expr::GreaterThan { lhs, rhs } => write!(f, "({} > {})", lhs, rhs),
-            Expr::GreaterThanOrEqual { lhs, rhs } => write!(f, "({} >= {})", lhs, rhs),
+            Expr::Binary { lhs, op, rhs } => write!(f, "({} {} {})", lhs, op, rhs),
+            Expr::Unary { op, expr } => write!(f, "({} {})", op, expr),
         }
     }
 }
