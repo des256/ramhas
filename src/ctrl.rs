@@ -4,6 +4,8 @@ use {
     std::{cell::RefCell, collections::HashMap, fmt::Display, rc::Rc},
 };
 
+#[derive(Debug, Clone)]
+
 pub enum Ctrl {
     Start {
         args: Vec<Rc<Expr>>,
@@ -222,7 +224,7 @@ impl Ctrl {
                 None
             }
             _ => {
-                panic!("cannot call get on {}", self);
+                panic!("cannot call get on {:?}", self);
             }
         }
     }
@@ -255,7 +257,7 @@ impl Ctrl {
                 }
             }
             _ => {
-                panic!("cannot call set on {}", self);
+                panic!("cannot call set on {:?}", self);
             }
         }
     }
@@ -265,35 +267,7 @@ impl Ctrl {
             Ctrl::Start { bindings, .. } => Rc::clone(bindings),
             Ctrl::Then { bindings, .. } => Rc::clone(bindings),
             Ctrl::Else { bindings, .. } => Rc::clone(bindings),
-            _ => panic!("cannot copy bindings from {}", self),
-        }
-    }
-}
-
-impl Display for Ctrl {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Ctrl::Start { .. } => write!(f, "Start"),
-            Ctrl::Return { expr, .. } => write!(f, "Return({})", expr),
-            Ctrl::Stop { ctrls } => write!(f, "Stop({})", ctrls.len()),
-            Ctrl::If {
-                expr, then, r#else, ..
-            } => {
-                write!(
-                    f,
-                    "If({},{}{})",
-                    expr,
-                    then,
-                    if let Some(r#else) = r#else {
-                        format!(",{}", r#else)
-                    } else {
-                        "".to_string()
-                    }
-                )
-            }
-            Ctrl::Then { .. } => write!(f, "Then"),
-            Ctrl::Else { .. } => write!(f, "Else"),
-            Ctrl::Merge { ctrls } => write!(f, "Merge({})", ctrls.len()),
+            _ => panic!("cannot copy bindings from {:?}", self),
         }
     }
 }

@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BoolValue {
     All,
     Constant(bool),
@@ -51,7 +51,7 @@ impl Display for BoolValue {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IntValue {
     All,
     Constant(i64),
@@ -102,7 +102,7 @@ impl Display for IntValue {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     All,
     Bool(BoolValue),

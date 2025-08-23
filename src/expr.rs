@@ -1,164 +1,401 @@
-use {
-    crate::*,
-    graphviz_rust::dot_structures::Attribute,
-    std::{fmt::Display, rc::Rc},
-};
+use {crate::*, graphviz_rust::dot_structures::Attribute};
 
-pub enum BinaryOp {
-    Add,
-    Subtract,
-    Multiply,
-    Divide,
-    Modulo,
-    And,
-    Or,
-    Xor,
-    LogicalAnd,
-    LogicalOr,
-    ShiftLeft,
-    ShiftRight,
-    Equal,
-    NotEqual,
-    LessThan,
-    GreaterThan,
-    LessThanOrEqual,
-    GreaterThanOrEqual,
-}
-
-impl Display for BinaryOp {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BinaryOp::Add => write!(f, "+"),
-            BinaryOp::Subtract => write!(f, "-"),
-            BinaryOp::Multiply => write!(f, "*"),
-            BinaryOp::Divide => write!(f, "/"),
-            BinaryOp::Modulo => write!(f, "%"),
-            BinaryOp::And => write!(f, "&"),
-            BinaryOp::Or => write!(f, "|"),
-            BinaryOp::Xor => write!(f, "^"),
-            BinaryOp::LogicalAnd => write!(f, "&&"),
-            BinaryOp::LogicalOr => write!(f, "||"),
-            BinaryOp::ShiftLeft => write!(f, "<<"),
-            BinaryOp::ShiftRight => write!(f, ">>"),
-            BinaryOp::Equal => write!(f, "=="),
-            BinaryOp::NotEqual => write!(f, "!="),
-            BinaryOp::LessThan => write!(f, "<"),
-            BinaryOp::GreaterThan => write!(f, ">"),
-            BinaryOp::LessThanOrEqual => write!(f, "<="),
-            BinaryOp::GreaterThanOrEqual => write!(f, ">="),
-        }
-    }
-}
-
-pub enum UnaryOp {
-    Negate,
-    Not,
-    LogicalNot,
-}
-
-impl Display for UnaryOp {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            UnaryOp::Negate => write!(f, "-"),
-            UnaryOp::Not => write!(f, "~"),
-            UnaryOp::LogicalNot => write!(f, "!"),
-        }
-    }
-}
-
+#[derive(Debug, Clone)]
 pub enum Expr {
     Phi {
-        ctrl: Rc<Ctrl>,
-        exprs: Vec<Rc<Expr>>,
+        ctrl: Id<Ctrl>,
+        expr_ids: Vec<Id<Expr>>,
     },
     Constant {
         value: Value,
     },
     Binary {
-        lhs: Rc<Expr>,
+        lhs_id: Id<Expr>,
         op: BinaryOp,
-        rhs: Rc<Expr>,
+        rhs_id: Id<Expr>,
     },
     Unary {
         op: UnaryOp,
-        expr: Rc<Expr>,
+        expr_id: Id<Expr>,
     },
 }
 
-impl Expr {
-    pub fn peephole(self: Rc<Self>) -> Rc<Expr> {
-        let value = self.compute();
+impl Arena<Expr> {
+    pub fn peephole(&mut self, id: Id<Expr>) -> Id<Expr> {
+        let value = self.compute(id);
         match value {
-            Value::Int(IntValue::Constant(_)) => Rc::new(Expr::Constant { value }),
-            Value::Bool(BoolValue::Constant(_)) => Rc::new(Expr::Constant { value }),
-            _ => self,
+            Value::All => {}
+            Value::Int(value) => {
+                // if integer constant, solidify
+                if let IntValue::Constant(_) = value {
+                    return self.alloc(Expr::Constant {
+                        value: Value::Int(value),
+                    });
+                }
+                let expr = self.get(&id);
+                match expr {
+                    Expr::Phi { .. } => {}
+                    Expr::Constant { .. } => {}
+                    Expr::Binary { lhs_id, op, rhs_id } => {
+                        let lhs = self.get(&lhs_id);
+                        let rhs = self.get(&rhs_id);
+                        match op {
+                            BinaryOp::Add => {
+                                // 0 + expr -> expr
+                                // const + expr -> expr + const
+                                if let Expr::Constant {
+                                    value: Value::Int(IntValue::Constant(lhs_value)),
+                                } = lhs
+                                {
+                                    if *lhs_value == 0 {
+                                        return *rhs_id;
+                                    } else {
+                                        return self.alloc(Expr::Binary {
+                                            lhs_id: *rhs_id,
+                                            op: BinaryOp::Add,
+                                            rhs_id: *lhs_id,
+                                        });
+                                    }
+                                }
+                                // expr + 0 -> expr
+                                if let Expr::Constant {
+                                    value: Value::Int(IntValue::Constant(0)),
+                                } = rhs
+                                {
+                                    return *lhs_id;
+                                }
+                                // TODO: const1 + (expr + const2) -> expr + (const1 + const2)
+                                // TODO: (expr1 + const) + expr2 -> (expr1 + expr2) + const
+                                // TODO: expr + expr -> expr * 2
+                            }
+                            BinaryOp::Subtract => {
+                                // 0 - expr -> -expr
+                                if let Expr::Constant {
+                                    value: Value::Int(IntValue::Constant(0)),
+                                } = lhs
+                                {
+                                    return self.alloc(Expr::Unary {
+                                        op: UnaryOp::Negate,
+                                        expr_id: *rhs_id,
+                                    });
+                                }
+                                // expr - 0 -> expr
+                                if let Expr::Constant {
+                                    value: Value::Int(IntValue::Constant(0)),
+                                } = rhs
+                                {
+                                    return *lhs_id;
+                                }
+                                // expr - expr -> 0
+                                if *lhs_id == *rhs_id {
+                                    return self.alloc(Expr::Constant {
+                                        value: Value::Int(IntValue::Constant(0)),
+                                    });
+                                }
+                            }
+                            BinaryOp::Multiply => {
+                                if let Expr::Constant {
+                                    value: Value::Int(IntValue::Constant(lhs_value)),
+                                } = lhs
+                                {
+                                    // 0 * expr -> 0
+                                    if *lhs_value == 0 {
+                                        return self.alloc(Expr::Constant {
+                                            value: Value::Int(IntValue::Constant(0)),
+                                        });
+                                    }
+                                    // 1 * expr -> expr
+                                    if *lhs_value == 1 {
+                                        return *rhs_id;
+                                    }
+                                    // -1 * expr -> -expr
+                                    if *lhs_value == -1 {
+                                        return self.alloc(Expr::Unary {
+                                            op: UnaryOp::Negate,
+                                            expr_id: *rhs_id,
+                                        });
+                                    }
+                                    // const * expr -> expr * const
+                                    else {
+                                        return self.alloc(Expr::Binary {
+                                            lhs_id: *rhs_id,
+                                            op: BinaryOp::Multiply,
+                                            rhs_id: *lhs_id,
+                                        });
+                                    }
+                                }
+                            }
+                            BinaryOp::Divide => {
+                                // 0 / expr -> 0
+                                if let Expr::Constant {
+                                    value: Value::Int(IntValue::Constant(0)),
+                                } = lhs
+                                {
+                                    return *lhs_id;
+                                }
+                                // expr / 1 -> expr
+                                if let Expr::Constant {
+                                    value: Value::Int(IntValue::Constant(1)),
+                                } = rhs
+                                {
+                                    return *lhs_id;
+                                }
+                            }
+                            BinaryOp::Modulo => {
+                                // 0 % expr -> 0
+                                if let Expr::Constant {
+                                    value: Value::Int(IntValue::Constant(0)),
+                                } = lhs
+                                {
+                                    return *lhs_id;
+                                }
+                                // expr % 1 -> 0
+                                if let Expr::Constant {
+                                    value: Value::Int(IntValue::Constant(1)),
+                                } = rhs
+                                {
+                                    return self.alloc(Expr::Constant {
+                                        value: Value::Int(IntValue::Constant(0)),
+                                    });
+                                }
+                            }
+                            BinaryOp::LogicalAnd => {}
+                            BinaryOp::LogicalOr => {}
+                            BinaryOp::And => {}
+                            BinaryOp::Or => {}
+                            BinaryOp::Xor => {}
+                            BinaryOp::ShiftLeft => {}
+                            BinaryOp::ShiftRight => {}
+                            BinaryOp::Equal => {}
+                            BinaryOp::NotEqual => {}
+                            BinaryOp::LessThan => {}
+                            BinaryOp::GreaterThan => {}
+                            BinaryOp::LessThanOrEqual => {}
+                            BinaryOp::GreaterThanOrEqual => {}
+                        }
+                    }
+                    Expr::Unary { .. } => {}
+                }
+            }
+            Value::Bool(value) => {
+                if let BoolValue::Constant(_) = value {
+                    return self.alloc(Expr::Constant {
+                        value: Value::Bool(value),
+                    });
+                }
+                let expr = self.get(&id);
+                match expr {
+                    Expr::Phi { .. } => {}
+                    Expr::Constant { .. } => {}
+                    Expr::Binary { lhs_id, op, rhs_id } => {
+                        let lhs = self.get(&lhs_id);
+                        let rhs = self.get(&rhs_id);
+                        match op {
+                            BinaryOp::LogicalAnd => {
+                                // false && expr -> false
+                                if let Expr::Constant {
+                                    value: Value::Bool(BoolValue::Constant(false)),
+                                } = lhs
+                                {
+                                    return *lhs_id;
+                                }
+                                // expr && false -> false
+                                if let Expr::Constant {
+                                    value: Value::Bool(BoolValue::Constant(false)),
+                                } = rhs
+                                {
+                                    return *rhs_id;
+                                }
+                            }
+                            BinaryOp::LogicalOr => {
+                                // true || expr -> true
+                                if let Expr::Constant {
+                                    value: Value::Bool(BoolValue::Constant(true)),
+                                } = lhs
+                                {
+                                    return *lhs_id;
+                                }
+                                // expr || true -> true
+                                if let Expr::Constant {
+                                    value: Value::Bool(BoolValue::Constant(true)),
+                                } = rhs
+                                {
+                                    return *rhs_id;
+                                }
+                            }
+                            BinaryOp::Equal => {
+                                // expr == expr -> true
+                                if lhs_id == rhs_id {
+                                    return self.alloc(Expr::Constant {
+                                        value: Value::Bool(BoolValue::Constant(true)),
+                                    });
+                                }
+                            }
+                            BinaryOp::NotEqual => {
+                                // expr != expr -> false
+                                if lhs_id == rhs_id {
+                                    return self.alloc(Expr::Constant {
+                                        value: Value::Bool(BoolValue::Constant(false)),
+                                    });
+                                }
+                            }
+                            BinaryOp::LessThan => {
+                                // expr < expr -> false
+                                if lhs_id == rhs_id {
+                                    return self.alloc(Expr::Constant {
+                                        value: Value::Bool(BoolValue::Constant(false)),
+                                    });
+                                }
+                            }
+                            BinaryOp::GreaterThan => {
+                                // expr > expr -> false
+                                if lhs_id == rhs_id {
+                                    return self.alloc(Expr::Constant {
+                                        value: Value::Bool(BoolValue::Constant(false)),
+                                    });
+                                }
+                            }
+                            BinaryOp::LessThanOrEqual => {
+                                // expr <= expr -> true
+                                if lhs_id == rhs_id {
+                                    return self.alloc(Expr::Constant {
+                                        value: Value::Bool(BoolValue::Constant(true)),
+                                    });
+                                }
+                            }
+                            BinaryOp::GreaterThanOrEqual => {
+                                // expr >= expr -> true
+                                if lhs_id == rhs_id {
+                                    return self.alloc(Expr::Constant {
+                                        value: Value::Bool(BoolValue::Constant(true)),
+                                    });
+                                }
+                            }
+                            BinaryOp::Add => {}
+                            BinaryOp::Subtract => {}
+                            BinaryOp::Multiply => {}
+                            BinaryOp::Divide => {}
+                            BinaryOp::Modulo => {}
+                            BinaryOp::And => {}
+                            BinaryOp::Or => {}
+                            BinaryOp::Xor => {}
+                            BinaryOp::ShiftLeft => {}
+                            BinaryOp::ShiftRight => {}
+                        }
+                    }
+                    Expr::Unary { op, expr_id } => {
+                        let expr = self.get(&expr_id);
+                        match op {
+                            UnaryOp::Not => {
+                                // !true -> false
+                                if let Expr::Constant {
+                                    value: Value::Bool(BoolValue::Constant(true)),
+                                } = expr
+                                {
+                                    return self.alloc(Expr::Constant {
+                                        value: Value::Bool(BoolValue::Constant(false)),
+                                    });
+                                }
+                                // !false -> true
+                                if let Expr::Constant {
+                                    value: Value::Bool(BoolValue::Constant(false)),
+                                } = expr
+                                {
+                                    return self.alloc(Expr::Constant {
+                                        value: Value::Bool(BoolValue::Constant(true)),
+                                    });
+                                }
+                            }
+                            UnaryOp::Negate => {}
+                        }
+                    }
+                }
+            }
+            Value::Any => {}
         }
+        id
     }
 
-    pub fn compute(&self) -> Value {
-        match self {
-            Expr::Phi { exprs, .. } => {
+    pub fn compute(&self, id: &Id<Expr>) -> Value {
+        let expr = self.get(&id);
+        match expr {
+            Expr::Phi { expr_ids, .. } => {
                 let mut value = Value::Any;
-                for expr in exprs.iter() {
-                    value = value.join(&expr.compute());
+                for id in expr_ids.iter() {
+                    value = value.join(&self.compute(id));
                 }
                 value
             }
             Expr::Constant { value } => value.clone(),
-            Expr::Binary { lhs, op, rhs } => {
-                let lhs = lhs.compute();
-                let rhs = rhs.compute();
+            Expr::Binary { lhs_id, op, rhs_id } => {
+                let lhs = self.compute(lhs_id);
+                let rhs = self.compute(rhs_id);
                 if let (
-                    &Value::Int(IntValue::Constant(lhs)),
-                    &Value::Int(IntValue::Constant(rhs)),
+                    &Value::Int(IntValue::Constant(lhs_value)),
+                    &Value::Int(IntValue::Constant(rhs_value)),
                 ) = (&lhs, &rhs)
                 {
                     match op {
-                        BinaryOp::Add => Value::Int(IntValue::Constant(lhs + rhs)),
-                        BinaryOp::Subtract => Value::Int(IntValue::Constant(lhs - rhs)),
-                        BinaryOp::Multiply => Value::Int(IntValue::Constant(lhs * rhs)),
-                        BinaryOp::Divide => Value::Int(IntValue::Constant(lhs / rhs)),
-                        BinaryOp::Modulo => Value::Int(IntValue::Constant(lhs % rhs)),
-                        BinaryOp::And => Value::Int(IntValue::Constant(lhs & rhs)),
-                        BinaryOp::Or => Value::Int(IntValue::Constant(lhs | rhs)),
-                        BinaryOp::Xor => Value::Int(IntValue::Constant(lhs ^ rhs)),
-                        BinaryOp::ShiftLeft => Value::Int(IntValue::Constant(lhs << rhs)),
-                        BinaryOp::ShiftRight => Value::Int(IntValue::Constant(lhs >> rhs)),
-                        BinaryOp::Equal => Value::Bool(BoolValue::Constant(lhs == rhs)),
-                        BinaryOp::NotEqual => Value::Bool(BoolValue::Constant(lhs != rhs)),
-                        BinaryOp::LessThan => Value::Bool(BoolValue::Constant(lhs < rhs)),
-                        BinaryOp::GreaterThan => Value::Bool(BoolValue::Constant(lhs > rhs)),
-                        BinaryOp::LessThanOrEqual => Value::Bool(BoolValue::Constant(lhs <= rhs)),
+                        BinaryOp::Add => Value::Int(IntValue::Constant(lhs_value + rhs_value)),
+                        BinaryOp::Subtract => Value::Int(IntValue::Constant(lhs_value - rhs_value)),
+                        BinaryOp::Multiply => Value::Int(IntValue::Constant(lhs_value * rhs_value)),
+                        BinaryOp::Divide => Value::Int(IntValue::Constant(lhs_value / rhs_value)),
+                        BinaryOp::Modulo => Value::Int(IntValue::Constant(lhs_value % rhs_value)),
+                        BinaryOp::And => Value::Int(IntValue::Constant(lhs_value & rhs_value)),
+                        BinaryOp::Or => Value::Int(IntValue::Constant(lhs_value | rhs_value)),
+                        BinaryOp::Xor => Value::Int(IntValue::Constant(lhs_value ^ rhs_value)),
+                        BinaryOp::ShiftLeft => {
+                            Value::Int(IntValue::Constant(lhs_value << rhs_value))
+                        }
+                        BinaryOp::ShiftRight => {
+                            Value::Int(IntValue::Constant(lhs_value >> rhs_value))
+                        }
+                        BinaryOp::Equal => Value::Bool(BoolValue::Constant(lhs_value == rhs_value)),
+                        BinaryOp::NotEqual => {
+                            Value::Bool(BoolValue::Constant(lhs_value != rhs_value))
+                        }
+                        BinaryOp::LessThan => {
+                            Value::Bool(BoolValue::Constant(lhs_value < rhs_value))
+                        }
+                        BinaryOp::GreaterThan => {
+                            Value::Bool(BoolValue::Constant(lhs_value > rhs_value))
+                        }
+                        BinaryOp::LessThanOrEqual => {
+                            Value::Bool(BoolValue::Constant(lhs_value <= rhs_value))
+                        }
                         BinaryOp::GreaterThanOrEqual => {
-                            Value::Bool(BoolValue::Constant(lhs >= rhs))
+                            Value::Bool(BoolValue::Constant(lhs_value >= rhs_value))
                         }
                         _ => panic!("binary operator '{}' invalid for integers", op),
                     }
                 } else if let (
-                    &Value::Bool(BoolValue::Constant(lhs)),
-                    &Value::Bool(BoolValue::Constant(rhs)),
+                    &Value::Bool(BoolValue::Constant(lhs_value)),
+                    &Value::Bool(BoolValue::Constant(rhs_value)),
                 ) = (&lhs, &rhs)
                 {
                     match op {
-                        BinaryOp::LogicalAnd => Value::Bool(BoolValue::Constant(lhs && rhs)),
-                        BinaryOp::LogicalOr => Value::Bool(BoolValue::Constant(lhs || rhs)),
+                        BinaryOp::LogicalAnd => {
+                            Value::Bool(BoolValue::Constant(lhs_value && rhs_value))
+                        }
+                        BinaryOp::LogicalOr => {
+                            Value::Bool(BoolValue::Constant(lhs_value || rhs_value))
+                        }
                         _ => panic!("binary operator '{}' invalid for booleans", op),
                     }
                 } else {
                     lhs.join(&rhs)
                 }
             }
-            Expr::Unary { op, expr } => {
-                let expr = expr.compute();
+            Expr::Unary { op, expr_id } => {
+                let expr = self.compute(expr_id);
                 if let Value::Int(IntValue::Constant(expr)) = expr {
                     match op {
                         UnaryOp::Negate => Value::Int(IntValue::Constant(-expr)),
                         UnaryOp::Not => Value::Int(IntValue::Constant(!expr)),
-                        _ => panic!("unary operator '{}' invalid for integers", op),
                     }
                 } else if let Value::Bool(BoolValue::Constant(expr)) = expr {
                     match op {
-                        UnaryOp::LogicalNot => Value::Bool(BoolValue::Constant(!expr)),
+                        UnaryOp::Not => Value::Bool(BoolValue::Constant(!expr)),
                         _ => panic!("unary operator '{}' invalid for booleans", op),
                     }
                 } else {
@@ -168,41 +405,21 @@ impl Expr {
         }
     }
 
-    pub fn idealize(self: Rc<Self>) -> Rc<Self> {
-        // TODO: 0 + expr -> expr
-        // TODO: expr + 0 -> expr
-        // TODO: const + expr -> expr + const
-        // TODO: const1 + (expr + const2) -> expr + (const1 + const2)
-        // TODO: (expr1 + const) + expr2 -> (expr1 + expr2) + const
-        // TODO: expr + expr -> expr * 2
-        // TODO: 0 - expr -> -expr
-        // TODO: expr - 0 -> expr
-        // TODO: expr - expr -> 0
-        // TODO: 1 * expr -> expr
-        // TODO: expr * 1 -> expr
-        // TODO: const * expr -> expr * const
-        // TODO: expr / 1 -> expr
-        // TODO: expr == expr -> true
-        // TODO: expr != expr -> false
-        // TODO: expr < expr -> false
-        // TODO: expr > expr -> false
-        // TODO: expr <= expr -> true
-        // TODO: expr >= expr -> true
-        self
-    }
-
+    /*
     pub fn visualize(
         &self,
+        id: Id<Expr>,
         gen_id: &str,
         visualizer: &mut Visualizer,
         attributes: &mut Vec<Attribute>,
     ) {
-        match self {
-            Expr::Phi { ctrl, exprs } => {
+        let expr = self.get(&id);
+        match expr {
+            Expr::Phi { ctrl, expr_ids } => {
                 add_attr(attributes, "label", "\"Phi\"");
-                let ctrl_id = visualizer.add_ctrl(ctrl);
-                for expr in exprs.iter() {
-                    let expr_id = visualizer.add_expr(expr);
+                let ctrl_id = visualizer.add_ctrl(self, ctrl);
+                for expr_id in expr_ids.iter() {
+                    let expr_id = visualizer.add_expr(self, expr_id);
                     visualizer.add_n2n(&gen_id, &expr_id, false);
                 }
                 visualizer.add_n2n(&gen_id, &ctrl_id, true);
@@ -210,29 +427,13 @@ impl Expr {
             Expr::Constant { value } => {
                 add_attr(attributes, "label", &format!("{}", value));
             }
-            Expr::Binary { lhs, op, rhs } => {
+            Expr::Binary { lhs_id, op, rhs_id } => {
                 add_attr(attributes, "label", &format!("\"{}\"", op));
-                let lhs_id = visualizer.add_expr(lhs);
-                let rhs_id = visualizer.add_expr(rhs);
-                visualizer.add_n2n(&gen_id, &lhs_id, false);
-                visualizer.add_n2n(&gen_id, &rhs_id, false);
             }
-            Expr::Unary { op, expr } => {
+            Expr::Unary { op, expr_id } => {
                 add_attr(attributes, "label", &format!("\"{}\"", op));
-                let expr_id = visualizer.add_expr(expr);
-                visualizer.add_n2n(&gen_id, &expr_id, false);
             }
         }
     }
-}
-
-impl Display for Expr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Expr::Phi { exprs, .. } => write!(f, "Phi({})", exprs.len()),
-            Expr::Constant { value } => write!(f, "{}", value),
-            Expr::Binary { lhs, op, rhs } => write!(f, "({} {} {})", lhs, op, rhs),
-            Expr::Unary { op, expr } => write!(f, "({} {})", op, expr),
-        }
-    }
+    */
 }

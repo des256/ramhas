@@ -3,7 +3,9 @@ use {
     anyhow::Result,
     graphviz_rust::{
         cmd::{CommandArg, Format},
-        dot_structures::{Attribute, Edge, EdgeTy, Graph, Id, Node, NodeId, Port, Stmt, Vertex},
+        dot_structures::{
+            Attribute, Edge, EdgeTy, Graph, Id as DotId, Node, NodeId, Port, Stmt, Vertex,
+        },
         exec,
         printer::PrinterContext,
     },
@@ -18,8 +20,8 @@ pub struct Visualizer {
 
 pub fn add_attr(attributes: &mut Vec<Attribute>, name: &str, value: &str) {
     attributes.push(Attribute(
-        Id::Plain(name.to_string()),
-        Id::Plain(value.to_string()),
+        DotId::Plain(name.to_string()),
+        DotId::Plain(value.to_string()),
     ));
 }
 
@@ -52,13 +54,13 @@ impl Visualizer {
     pub fn add_n2n(&mut self, from: &str, to: &str, red: bool) {
         self.edges.push(Edge {
             ty: EdgeTy::Pair(
-                Vertex::N(NodeId(Id::Plain(from.to_string()), None)),
-                Vertex::N(NodeId(Id::Plain(to.to_string()), None)),
+                Vertex::N(NodeId(DotId::Plain(from.to_string()), None)),
+                Vertex::N(NodeId(DotId::Plain(to.to_string()), None)),
             ),
             attributes: if red {
                 vec![Attribute(
-                    Id::Plain("color".to_string()),
-                    Id::Plain("red".to_string()),
+                    DotId::Plain("color".to_string()),
+                    DotId::Plain("red".to_string()),
                 )]
             } else {
                 Vec::new()
@@ -69,16 +71,16 @@ impl Visualizer {
     pub fn add_n2p(&mut self, from: &str, to: &str, port: &str, red: bool) {
         self.edges.push(Edge {
             ty: EdgeTy::Pair(
-                Vertex::N(NodeId(Id::Plain(from.to_string()), None)),
+                Vertex::N(NodeId(DotId::Plain(from.to_string()), None)),
                 Vertex::N(NodeId(
-                    Id::Plain(to.to_string()),
-                    Some(Port(Some(Id::Plain(port.to_string())), None)),
+                    DotId::Plain(to.to_string()),
+                    Some(Port(Some(DotId::Plain(port.to_string())), None)),
                 )),
             ),
             attributes: if red {
                 vec![Attribute(
-                    Id::Plain("color".to_string()),
-                    Id::Plain("red".to_string()),
+                    DotId::Plain("color".to_string()),
+                    DotId::Plain("red".to_string()),
                 )]
             } else {
                 Vec::new()
@@ -90,15 +92,15 @@ impl Visualizer {
         self.edges.push(Edge {
             ty: EdgeTy::Pair(
                 Vertex::N(NodeId(
-                    Id::Plain(from.to_string()),
-                    Some(Port(Some(Id::Plain(port.to_string())), None)),
+                    DotId::Plain(from.to_string()),
+                    Some(Port(Some(DotId::Plain(port.to_string())), None)),
                 )),
-                Vertex::N(NodeId(Id::Plain(to.to_string()), None)),
+                Vertex::N(NodeId(DotId::Plain(to.to_string()), None)),
             ),
             attributes: if red {
                 vec![Attribute(
-                    Id::Plain("color".to_string()),
-                    Id::Plain("red".to_string()),
+                    DotId::Plain("color".to_string()),
+                    DotId::Plain("red".to_string()),
                 )]
             } else {
                 Vec::new()
@@ -117,7 +119,7 @@ impl Visualizer {
         }
         let scopes_id = self.generate_id();
         let mut node = Node {
-            id: NodeId(Id::Plain(scopes_id.clone()), None),
+            id: NodeId(DotId::Plain(scopes_id.clone()), None),
             attributes: Vec::new(),
         };
         add_attr(&mut node.attributes, "shape", "record");
@@ -148,20 +150,20 @@ impl Visualizer {
         scopes_id
     }
 
-    pub fn add_ctrl(&mut self, ctrl: &Rc<Ctrl>) -> String {
+    pub fn add_ctrl(&mut self, arena: &Arena<Ctrl>, ctrl: &Id<Ctrl>) -> String {
         let index = ctrl as *const _ as u64;
         if self.nodes.contains_key(&index) {
             return self.nodes[&index].id.0.to_string();
         }
         let gen_id = self.generate_id();
         let mut node = Node {
-            id: NodeId(Id::Plain(gen_id.clone()), None),
+            id: NodeId(DotId::Plain(gen_id.clone()), None),
             attributes: Vec::new(),
         };
         add_attr(&mut node.attributes, "shape", "record");
         add_attr(&mut node.attributes, "fillcolor", "yellow");
         add_attr(&mut node.attributes, "style", "filled");
-        ctrl.visualize(&gen_id, self, &mut node.attributes);
+        arena.visualize(&ctrl, &gen_id, self, &mut node.attributes);
         self.nodes.insert(index, node);
         gen_id
     }

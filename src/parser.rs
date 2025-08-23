@@ -7,6 +7,8 @@ pub struct Parser<'a> {
     tokenizer: Tokenizer<'a>,
     current: Option<Token>,
     pi: usize,
+    exprs: Arena<Expr>,
+    ctrls: Arena<Ctrl>,
 }
 
 impl<'a> Parser<'a> {
@@ -17,6 +19,8 @@ impl<'a> Parser<'a> {
             tokenizer,
             current,
             pi: 0,
+            exprs: Arena::new(),
+            ctrls: Arena::new(),
         }
     }
 
@@ -43,8 +47,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse_program(&mut self) -> Rc<Ctrl> {
-        let ctrl: Rc<Ctrl> = Rc::new(Ctrl::Start {
+    pub fn parse_program(&mut self) -> Id<Ctrl> {
+        let ctrl: Id<Ctrl> = self.ctrls.alloc(Ctrl::Start {
             args: Vec::new(),
             bindings: Rc::new(RefCell::new(Vec::new())),
         });
@@ -66,7 +70,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_statement(&mut self, ctrl: &Rc<Ctrl>) -> Option<Rc<Ctrl>> {
+    fn parse_statement(&mut self, ctrl: &Id<Ctrl>) -> Option<Id<Ctrl>> {
         #[allow(unused_assignments)]
         let mut title = String::new();
         let result: Option<Rc<Ctrl>> = match &self.current {
@@ -466,14 +470,6 @@ impl<'a> Parser<'a> {
                 })
             }
             Some(Token::Excl) => {
-                self.consume();
-                let expr = self.parse_unary_expression(ctrl).peephole();
-                Rc::new(Expr::Unary {
-                    op: UnaryOp::LogicalNot,
-                    expr,
-                })
-            }
-            Some(Token::Tilde) => {
                 self.consume();
                 let expr = self.parse_unary_expression(ctrl).peephole();
                 Rc::new(Expr::Unary {
