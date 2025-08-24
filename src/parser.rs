@@ -1,7 +1,4 @@
-use {
-    crate::*,
-    std::{cell::RefCell, path::Path, rc::Rc},
-};
+use crate::*;
 
 pub struct Parser<'a> {
     tokenizer: Tokenizer<'a>,
@@ -48,20 +45,20 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse_program(&mut self) -> Id<Ctrl> {
-        let ctrl: Id<Ctrl> = self.ctrls.alloc(Ctrl::Start {
-            args: Vec::new(),
-            bindings: Rc::new(RefCell::new(Vec::new())),
+        let ctrl_id: Id<Ctrl> = self.ctrls.alloc(Ctrl::Start {
+            arg_ids: Vec::new(),
+            symbols: Symbols::new(),
         });
 
-        ctrl.push_scope();
+        self.ctrls.symbols_mut(ctrl_id).push_scope();
 
         // TODO: add args to scope as Proj
-        let mut result: Option<Rc<Ctrl>> = None;
+        let mut result: Option<Id<Ctrl>> = None;
         while let Some(_) = self.current {
-            result = self.parse_statement(&ctrl);
+            result = self.parse_statement(ctrl_id);
         }
 
-        ctrl.pop_scope();
+        self.ctrls.symbols_mut(ctrl_id).pop_scope();
 
         if let Some(result) = result {
             result
@@ -70,17 +67,18 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_statement(&mut self, ctrl: &Id<Ctrl>) -> Option<Id<Ctrl>> {
-        #[allow(unused_assignments)]
-        let mut title = String::new();
-        let result: Option<Rc<Ctrl>> = match &self.current {
+    fn parse_statement(&mut self, ctrl_id: Id<Ctrl>) -> Option<Id<Ctrl>> {
+        //#[allow(unused_assignments)]
+        //let mut title = String::new();
+        let result_id: Option<Id<Ctrl>> = match &self.current {
             Some(Token::Return) => {
                 self.consume();
-                let expr = self.parse_expression(ctrl).peephole();
-                title = format!("return {};", expr);
-                let result = Ctrl::new_return(Rc::clone(&ctrl), expr);
+                let expr_id = self.parse_expression(ctrl_id);
+                let expr_id = self.exprs.peephole(expr_id);
+                //title = format!("return {};", expr_id);
+                let result_id = self.ctrls.alloc(Ctrl::Return { ctrl_id, expr_id });
                 self.expect(Token::Semicolon);
-                Some(result)
+                Some(result_id)
             }
             Some(Token::Int) => {
                 self.consume();
@@ -91,16 +89,17 @@ impl<'a> Parser<'a> {
                 };
                 self.consume(); // name
                 self.expect(Token::Equal);
-                let expr = self.parse_expression(ctrl).peephole();
-                title = format!("int {} = {};", name, expr);
+                let expr_id = self.parse_expression(ctrl_id);
+                let expr_id = self.exprs.peephole(expr_id);
+                //title = format!("int {} = {};", name, expr_id);
                 self.expect(Token::Semicolon);
-                ctrl.declare(&name, expr);
+                self.ctrls.symbols_mut(ctrl_id).declare(&name, expr_id);
                 None
             }
             Some(Token::OpenBrace) => {
                 self.consume();
-                ctrl.push_scope();
-                let mut result: Option<Rc<Ctrl>> = None;
+                self.ctrls.symbols_mut(ctrl_id).push_scope();
+                let mut result_id: Option<Id<Ctrl>> = None;
                 loop {
                     match self.current {
                         Some(Token::CloseBrace) => {
@@ -111,73 +110,84 @@ impl<'a> Parser<'a> {
                             panic!("block statement: unexpected end of source");
                         }
                         _ => {
-                            result = self.parse_statement(&ctrl);
+                            result_id = self.parse_statement(ctrl_id);
                         }
                     }
                 }
-                ctrl.pop_scope();
-                title = "{}".to_string();
-                result
+                self.ctrls.symbols_mut(ctrl_id).pop_scope();
+                //title = "{}".to_string();
+                result_id
             }
             Some(Token::If) => {
                 self.consume(); // if
-                let expr = self.parse_expression(ctrl).peephole();
-                let then = Ctrl::new_then(Rc::clone(&ctrl));
-                self.parse_statement(&then);
-                let r#else = if let Some(Token::Else) = self.current {
+                let expr_id = self.parse_expression(ctrl_id);
+                let expr_id = self.exprs.peephole(expr_id);
+                let symbols = self.ctrls.symbols(ctrl_id).clone();
+                let then_id = self.ctrls.alloc(Ctrl::Then { ctrl_id, symbols });
+                self.parse_statement(then_id);
+                let else_id = if let Some(Token::Else) = self.current {
                     self.consume(); // else
-                    let r#else = Ctrl::new_else(Rc::clone(&ctrl));
-                    self.parse_statement(&r#else);
-                    Some(r#else)
+                    let symbols = self.ctrls.symbols(ctrl_id).clone();
+                    let else_id = self.ctrls.alloc(Ctrl::Else { ctrl_id, symbols });
+                    self.parse_statement(else_id);
+                    Some(else_id)
                 } else {
                     None
                 };
-                title = format!("if ({}) {{}}", expr);
-                let result = Ctrl::new_if(Rc::clone(&ctrl), expr, then, r#else);
-                Some(result)
+                //title = format!("if ({}) {{}}", expr_id);
+                let result_id = self.ctrls.alloc(Ctrl::If {
+                    ctrl_id,
+                    expr_id,
+                    then_id,
+                    else_id,
+                });
+                Some(result_id)
             }
             Some(Token::Identifier(name)) => {
                 let name = name.clone();
                 self.consume(); // identifier
                 self.expect(Token::Equal);
-                let expr = self.parse_expression(ctrl).peephole();
-                title = format!("{} = {};", name, expr);
+                let expr_id = self.parse_expression(ctrl_id);
+                let expr_id = self.exprs.peephole(expr_id);
+                //title = format!("{} = {};", name, expr_id);
                 self.expect(Token::Semicolon);
-                ctrl.set(&name, expr);
+                self.ctrls.symbols_mut(ctrl_id).set(&name, expr_id);
                 None
             }
             Some(token) => panic!("statement: unexpected `{}`", token),
             None => panic!("statement: unexpected end of source"),
         };
-        if let Some(result) = &result {
-            let result = Rc::clone(&result);
-            visualize(&result, &title, Path::new(&format!("test{}.svg", self.pi))).unwrap();
+        if let Some(_result_id) = &result_id {
+            //let result_id = Rc::clone(&result_id);
+            //visualize(&result, &title, Path::new(&format!("test{}.svg", self.pi))).unwrap();
         } else {
-            visualize(&ctrl, &title, Path::new(&format!("test{}.svg", self.pi))).unwrap();
+            //visualize(&ctrl, &title, Path::new(&format!("test{}.svg", self.pi))).unwrap();
         }
         self.pi += 1;
-        if let Some(result) = result {
-            Some(result)
+        if let Some(result_id) = result_id {
+            Some(result_id)
         } else {
             None
         }
     }
 
-    fn parse_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
-        self.parse_logical_or_expression(ctrl)
+    fn parse_expression(&mut self, ctrl_id: Id<Ctrl>) -> Id<Expr> {
+        self.parse_logical_or_expression(ctrl_id)
     }
 
-    fn parse_logical_or_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
-        let mut total = self.parse_logical_and_expression(ctrl).peephole();
+    fn parse_logical_or_expression(&mut self, ctrl_id: Id<Ctrl>) -> Id<Expr> {
+        let expr_id = self.parse_logical_and_expression(ctrl_id);
+        let mut total_id = self.exprs.peephole(expr_id);
         loop {
             match self.current {
                 Some(Token::BarBar) => {
                     self.consume();
-                    let rhs = self.parse_logical_and_expression(ctrl).peephole();
-                    total = Rc::new(Expr::Binary {
-                        lhs: total,
+                    let rhs_id = self.parse_logical_and_expression(ctrl_id);
+                    let rhs_id = self.exprs.peephole(rhs_id);
+                    total_id = self.exprs.alloc(Expr::Binary {
+                        lhs_id: total_id,
                         op: BinaryOp::LogicalOr,
-                        rhs,
+                        rhs_id,
                     })
                 }
                 None => {
@@ -186,20 +196,22 @@ impl<'a> Parser<'a> {
                 _ => break,
             }
         }
-        total
+        total_id
     }
 
-    fn parse_logical_and_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
-        let mut total = self.parse_or_expression(ctrl).peephole();
+    fn parse_logical_and_expression(&mut self, ctrl_id: Id<Ctrl>) -> Id<Expr> {
+        let expr_id = self.parse_or_expression(ctrl_id);
+        let mut total_id = self.exprs.peephole(expr_id);
         loop {
             match self.current {
                 Some(Token::AmpAmp) => {
                     self.consume();
-                    let rhs = self.parse_or_expression(ctrl).peephole();
-                    total = Rc::new(Expr::Binary {
-                        lhs: total,
+                    let rhs_id = self.parse_or_expression(ctrl_id);
+                    let rhs_id = self.exprs.peephole(rhs_id);
+                    total_id = self.exprs.alloc(Expr::Binary {
+                        lhs_id: total_id,
                         op: BinaryOp::LogicalAnd,
-                        rhs,
+                        rhs_id,
                     })
                 }
                 None => {
@@ -208,20 +220,22 @@ impl<'a> Parser<'a> {
                 _ => break,
             }
         }
-        total
+        total_id
     }
 
-    fn parse_or_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
-        let mut total = self.parse_xor_expression(ctrl).peephole();
+    fn parse_or_expression(&mut self, ctrl_id: Id<Ctrl>) -> Id<Expr> {
+        let expr_id = self.parse_xor_expression(ctrl_id);
+        let mut total_id = self.exprs.peephole(expr_id);
         loop {
             match self.current {
                 Some(Token::Bar) => {
                     self.consume();
-                    let rhs = self.parse_xor_expression(ctrl).peephole();
-                    total = Rc::new(Expr::Binary {
-                        lhs: total,
+                    let rhs_id = self.parse_xor_expression(ctrl_id);
+                    let rhs_id = self.exprs.peephole(rhs_id);
+                    total_id = self.exprs.alloc(Expr::Binary {
+                        lhs_id: total_id,
                         op: BinaryOp::Or,
-                        rhs,
+                        rhs_id,
                     })
                 }
                 None => {
@@ -230,20 +244,22 @@ impl<'a> Parser<'a> {
                 _ => break,
             }
         }
-        total
+        total_id
     }
 
-    fn parse_xor_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
-        let mut total = self.parse_and_expression(ctrl).peephole();
+    fn parse_xor_expression(&mut self, ctrl_id: Id<Ctrl>) -> Id<Expr> {
+        let expr_id = self.parse_and_expression(ctrl_id);
+        let mut total_id = self.exprs.peephole(expr_id);
         loop {
             match self.current {
                 Some(Token::Caret) => {
                     self.consume();
-                    let rhs = self.parse_and_expression(ctrl).peephole();
-                    total = Rc::new(Expr::Binary {
-                        lhs: total,
+                    let rhs_id = self.parse_and_expression(ctrl_id);
+                    let rhs_id = self.exprs.peephole(rhs_id);
+                    total_id = self.exprs.alloc(Expr::Binary {
+                        lhs_id: total_id,
                         op: BinaryOp::Xor,
-                        rhs,
+                        rhs_id,
                     })
                 }
                 None => {
@@ -252,20 +268,22 @@ impl<'a> Parser<'a> {
                 _ => break,
             }
         }
-        total
+        total_id
     }
 
-    fn parse_and_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
-        let mut total = self.parse_equality_expression(ctrl).peephole();
+    fn parse_and_expression(&mut self, ctrl_id: Id<Ctrl>) -> Id<Expr> {
+        let expr_id = self.parse_equality_expression(ctrl_id);
+        let mut total_id = self.exprs.peephole(expr_id);
         loop {
             match self.current {
                 Some(Token::Amp) => {
                     self.consume();
-                    let rhs = self.parse_equality_expression(ctrl).peephole();
-                    total = Rc::new(Expr::Binary {
-                        lhs: total,
+                    let rhs_id = self.parse_equality_expression(ctrl_id);
+                    let rhs_id = self.exprs.peephole(rhs_id);
+                    total_id = self.exprs.alloc(Expr::Binary {
+                        lhs_id: total_id,
                         op: BinaryOp::And,
-                        rhs,
+                        rhs_id,
                     })
                 }
                 None => {
@@ -274,29 +292,32 @@ impl<'a> Parser<'a> {
                 _ => break,
             }
         }
-        total
+        total_id
     }
 
-    fn parse_equality_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
-        let mut total = self.parse_relational_expression(ctrl).peephole();
+    fn parse_equality_expression(&mut self, ctrl_id: Id<Ctrl>) -> Id<Expr> {
+        let expr_id = self.parse_relational_expression(ctrl_id);
+        let mut total_id = self.exprs.peephole(expr_id);
         loop {
             match self.current {
                 Some(Token::EqualEqual) => {
                     self.consume();
-                    let rhs = self.parse_relational_expression(ctrl).peephole();
-                    total = Rc::new(Expr::Binary {
-                        lhs: total,
+                    let rhs_id = self.parse_relational_expression(ctrl_id);
+                    let rhs_id = self.exprs.peephole(rhs_id);
+                    total_id = self.exprs.alloc(Expr::Binary {
+                        lhs_id: total_id,
                         op: BinaryOp::Equal,
-                        rhs,
+                        rhs_id,
                     })
                 }
                 Some(Token::ExclEqual) => {
                     self.consume();
-                    let rhs = self.parse_relational_expression(ctrl).peephole();
-                    total = Rc::new(Expr::Binary {
-                        lhs: total,
+                    let rhs_id = self.parse_relational_expression(ctrl_id);
+                    let rhs_id = self.exprs.peephole(rhs_id);
+                    total_id = self.exprs.alloc(Expr::Binary {
+                        lhs_id: total_id,
                         op: BinaryOp::NotEqual,
-                        rhs,
+                        rhs_id,
                     })
                 }
                 None => {
@@ -305,47 +326,52 @@ impl<'a> Parser<'a> {
                 _ => break,
             }
         }
-        total
+        total_id
     }
 
-    fn parse_relational_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
-        let mut total = self.parse_shift_expression(ctrl).peephole();
+    fn parse_relational_expression(&mut self, ctrl_id: Id<Ctrl>) -> Id<Expr> {
+        let expr_id = self.parse_shift_expression(ctrl_id);
+        let mut total_id = self.exprs.peephole(expr_id);
         loop {
             match self.current {
                 Some(Token::Less) => {
                     self.consume();
-                    let rhs = self.parse_shift_expression(ctrl).peephole();
-                    total = Rc::new(Expr::Binary {
-                        lhs: total,
+                    let rhs_id = self.parse_shift_expression(ctrl_id);
+                    let rhs_id = self.exprs.peephole(rhs_id);
+                    total_id = self.exprs.alloc(Expr::Binary {
+                        lhs_id: total_id,
                         op: BinaryOp::LessThan,
-                        rhs,
+                        rhs_id,
                     })
                 }
                 Some(Token::Greater) => {
                     self.consume();
-                    let rhs = self.parse_shift_expression(ctrl).peephole();
-                    total = Rc::new(Expr::Binary {
-                        lhs: total,
+                    let rhs_id = self.parse_shift_expression(ctrl_id);
+                    let rhs_id = self.exprs.peephole(rhs_id);
+                    total_id = self.exprs.alloc(Expr::Binary {
+                        lhs_id: total_id,
                         op: BinaryOp::GreaterThan,
-                        rhs,
+                        rhs_id,
                     })
                 }
                 Some(Token::LessEqual) => {
                     self.consume();
-                    let rhs = self.parse_shift_expression(ctrl).peephole();
-                    total = Rc::new(Expr::Binary {
-                        lhs: total,
+                    let rhs_id = self.parse_shift_expression(ctrl_id);
+                    let rhs_id = self.exprs.peephole(rhs_id);
+                    total_id = self.exprs.alloc(Expr::Binary {
+                        lhs_id: total_id,
                         op: BinaryOp::LessThanOrEqual,
-                        rhs,
+                        rhs_id,
                     })
                 }
                 Some(Token::GreaterEqual) => {
                     self.consume();
-                    let rhs = self.parse_shift_expression(ctrl).peephole();
-                    total = Rc::new(Expr::Binary {
-                        lhs: total,
+                    let rhs_id = self.parse_shift_expression(ctrl_id);
+                    let rhs_id = self.exprs.peephole(rhs_id);
+                    total_id = self.exprs.alloc(Expr::Binary {
+                        lhs_id: total_id,
                         op: BinaryOp::GreaterThanOrEqual,
-                        rhs,
+                        rhs_id,
                     })
                 }
                 None => {
@@ -354,29 +380,32 @@ impl<'a> Parser<'a> {
                 _ => break,
             }
         }
-        total
+        total_id
     }
 
-    fn parse_shift_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
-        let mut total = self.parse_additive_expression(ctrl).peephole();
+    fn parse_shift_expression(&mut self, ctrl_id: Id<Ctrl>) -> Id<Expr> {
+        let expr_id = self.parse_additive_expression(ctrl_id);
+        let mut total_id = self.exprs.peephole(expr_id);
         loop {
             match self.current {
                 Some(Token::LessLess) => {
                     self.consume();
-                    let rhs = self.parse_additive_expression(ctrl).peephole();
-                    total = Rc::new(Expr::Binary {
-                        lhs: total,
+                    let rhs_id = self.parse_additive_expression(ctrl_id);
+                    let rhs_id = self.exprs.peephole(rhs_id);
+                    total_id = self.exprs.alloc(Expr::Binary {
+                        lhs_id: total_id,
                         op: BinaryOp::ShiftLeft,
-                        rhs,
+                        rhs_id,
                     })
                 }
                 Some(Token::GreaterGreater) => {
                     self.consume();
-                    let rhs = self.parse_additive_expression(ctrl).peephole();
-                    total = Rc::new(Expr::Binary {
-                        lhs: total,
+                    let rhs_id = self.parse_additive_expression(ctrl_id);
+                    let rhs_id = self.exprs.peephole(rhs_id);
+                    total_id = self.exprs.alloc(Expr::Binary {
+                        lhs_id: total_id,
                         op: BinaryOp::ShiftRight,
-                        rhs,
+                        rhs_id,
                     })
                 }
                 None => {
@@ -385,29 +414,32 @@ impl<'a> Parser<'a> {
                 _ => break,
             }
         }
-        total
+        total_id
     }
 
-    fn parse_additive_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
-        let mut total = self.parse_multiplicative_expression(ctrl).peephole();
+    fn parse_additive_expression(&mut self, ctrl_id: Id<Ctrl>) -> Id<Expr> {
+        let expr_id = self.parse_multiplicative_expression(ctrl_id);
+        let mut total_id = self.exprs.peephole(expr_id);
         loop {
             match self.current {
                 Some(Token::Plus) => {
                     self.consume();
-                    let rhs = self.parse_multiplicative_expression(ctrl).peephole();
-                    total = Rc::new(Expr::Binary {
-                        lhs: total,
+                    let rhs_id = self.parse_multiplicative_expression(ctrl_id);
+                    let rhs_id = self.exprs.peephole(rhs_id);
+                    total_id = self.exprs.alloc(Expr::Binary {
+                        lhs_id: total_id,
                         op: BinaryOp::Add,
-                        rhs,
+                        rhs_id,
                     })
                 }
                 Some(Token::Minus) => {
                     self.consume();
-                    let rhs = self.parse_multiplicative_expression(ctrl).peephole();
-                    total = Rc::new(Expr::Binary {
-                        lhs: total,
+                    let rhs_id = self.parse_multiplicative_expression(ctrl_id);
+                    let rhs_id = self.exprs.peephole(rhs_id);
+                    total_id = self.exprs.alloc(Expr::Binary {
+                        lhs_id: total_id,
                         op: BinaryOp::Subtract,
-                        rhs,
+                        rhs_id,
                     })
                 }
                 None => {
@@ -416,38 +448,42 @@ impl<'a> Parser<'a> {
                 _ => break,
             }
         }
-        total
+        total_id
     }
 
-    fn parse_multiplicative_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
-        let mut total = self.parse_unary_expression(ctrl).peephole();
+    fn parse_multiplicative_expression(&mut self, ctrl_id: Id<Ctrl>) -> Id<Expr> {
+        let expr_id = self.parse_unary_expression(ctrl_id);
+        let mut total_id = self.exprs.peephole(expr_id);
         loop {
             match self.current {
                 Some(Token::Star) => {
                     self.consume();
-                    let rhs = self.parse_unary_expression(ctrl).peephole();
-                    total = Rc::new(Expr::Binary {
-                        lhs: total,
+                    let rhs_id = self.parse_unary_expression(ctrl_id);
+                    let rhs_id = self.exprs.peephole(rhs_id);
+                    total_id = self.exprs.alloc(Expr::Binary {
+                        lhs_id: total_id,
                         op: BinaryOp::Multiply,
-                        rhs,
+                        rhs_id,
                     })
                 }
                 Some(Token::Slash) => {
                     self.consume();
-                    let rhs = self.parse_unary_expression(ctrl).peephole();
-                    total = Rc::new(Expr::Binary {
-                        lhs: total,
+                    let rhs_id = self.parse_unary_expression(ctrl_id);
+                    let rhs_id = self.exprs.peephole(rhs_id);
+                    total_id = self.exprs.alloc(Expr::Binary {
+                        lhs_id: total_id,
                         op: BinaryOp::Divide,
-                        rhs,
+                        rhs_id,
                     })
                 }
                 Some(Token::Percent) => {
                     self.consume();
-                    let rhs = self.parse_unary_expression(ctrl).peephole();
-                    total = Rc::new(Expr::Binary {
-                        lhs: total,
+                    let rhs_id = self.parse_unary_expression(ctrl_id);
+                    let rhs_id = self.exprs.peephole(rhs_id);
+                    total_id = self.exprs.alloc(Expr::Binary {
+                        lhs_id: total_id,
                         op: BinaryOp::Modulo,
-                        rhs,
+                        rhs_id,
                     })
                 }
                 None => {
@@ -456,38 +492,41 @@ impl<'a> Parser<'a> {
                 _ => break,
             }
         }
-        total
+        total_id
     }
 
-    fn parse_unary_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
+    fn parse_unary_expression(&mut self, ctrl_id: Id<Ctrl>) -> Id<Expr> {
         match self.current {
             Some(Token::Minus) => {
                 self.consume();
-                let expr = self.parse_unary_expression(ctrl).peephole();
-                Rc::new(Expr::Unary {
+                let expr_id = self.parse_unary_expression(ctrl_id);
+                let expr_id = self.exprs.peephole(expr_id);
+                self.exprs.alloc(Expr::Unary {
                     op: UnaryOp::Negate,
-                    expr,
+                    expr_id,
                 })
             }
             Some(Token::Excl) => {
                 self.consume();
-                let expr = self.parse_unary_expression(ctrl).peephole();
-                Rc::new(Expr::Unary {
+                let expr_id = self.parse_unary_expression(ctrl_id);
+                let expr_id = self.exprs.peephole(expr_id);
+                self.exprs.alloc(Expr::Unary {
                     op: UnaryOp::Not,
-                    expr,
+                    expr_id,
                 })
             }
-            _ => self.parse_primary_expression(ctrl),
+            _ => self.parse_primary_expression(ctrl_id),
         }
     }
 
-    fn parse_primary_expression(&mut self, ctrl: &Rc<Ctrl>) -> Rc<Expr> {
+    fn parse_primary_expression(&mut self, ctrl_id: Id<Ctrl>) -> Id<Expr> {
         if let Some(Token::OpenParen) = self.current {
             self.consume();
-            let expr = self.parse_expression(ctrl).peephole();
+            let expr_id = self.parse_expression(ctrl_id);
+            let expr_id = self.exprs.peephole(expr_id);
             if let Some(Token::CloseParen) = self.current {
                 self.consume();
-                expr
+                expr_id
             } else {
                 panic!("primary expression: `)` expected");
             }
@@ -496,15 +535,15 @@ impl<'a> Parser<'a> {
                 Some(Token::Integer(value)) => {
                     let value = *value;
                     self.consume();
-                    Rc::new(Expr::Constant {
+                    self.exprs.alloc(Expr::Constant {
                         value: Value::Int(IntValue::Constant(value)),
                     })
                 }
                 Some(Token::Identifier(name)) => {
                     let name = name.clone();
                     self.consume();
-                    if let Some(expr) = ctrl.get(&name) {
-                        expr
+                    if let Some(expr_id) = self.ctrls.symbols(ctrl_id).get(&name) {
+                        expr_id
                     } else {
                         panic!("primary expression: undefined identifier `{}`", name);
                     }

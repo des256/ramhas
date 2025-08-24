@@ -1,4 +1,4 @@
-use {crate::*, graphviz_rust::dot_structures::Attribute};
+use crate::*;
 
 #[derive(Debug, Clone)]
 pub enum Expr {
@@ -316,20 +316,20 @@ impl Arena<Expr> {
         id
     }
 
-    pub fn compute(&self, id: &Id<Expr>) -> Value {
-        let expr = self.get(&id);
+    pub fn compute(&self, expr_id: Id<Expr>) -> Value {
+        let expr = self.get(&expr_id);
         match expr {
             Expr::Phi { expr_ids, .. } => {
                 let mut value = Value::Any;
                 for id in expr_ids.iter() {
-                    value = value.join(&self.compute(id));
+                    value = value.join(&self.compute(*id));
                 }
                 value
             }
             Expr::Constant { value } => value.clone(),
             Expr::Binary { lhs_id, op, rhs_id } => {
-                let lhs = self.compute(lhs_id);
-                let rhs = self.compute(rhs_id);
+                let lhs = self.compute(*lhs_id);
+                let rhs = self.compute(*rhs_id);
                 if let (
                     &Value::Int(IntValue::Constant(lhs_value)),
                     &Value::Int(IntValue::Constant(rhs_value)),
@@ -387,7 +387,7 @@ impl Arena<Expr> {
                 }
             }
             Expr::Unary { op, expr_id } => {
-                let expr = self.compute(expr_id);
+                let expr = self.compute(*expr_id);
                 if let Value::Int(IntValue::Constant(expr)) = expr {
                     match op {
                         UnaryOp::Negate => Value::Int(IntValue::Constant(-expr)),

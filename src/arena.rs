@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{fmt::Display, marker::PhantomData};
 
 #[derive(Debug, Clone, Hash)]
 pub struct Id<T> {
@@ -11,6 +11,12 @@ impl<T: Clone> Copy for Id<T> {}
 impl<T> PartialEq for Id<T> {
     fn eq(&self, other: &Self) -> bool {
         self.index == other.index
+    }
+}
+
+impl<T> Display for Id<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.index)
     }
 }
 

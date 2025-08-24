@@ -10,6 +10,9 @@ pub use tokenizer::*;
 mod arena;
 pub use arena::*;
 
+mod symbols;
+pub use symbols::*;
+
 mod parser;
 pub use parser::*;
 
